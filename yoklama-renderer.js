@@ -1,5 +1,7 @@
 const { ipcRenderer } = require('electron');
 
+document.getElementById('versionText').textContent = `v${require('./package.json').version}`;
+
 // --- DURUM ---
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');

@@ -448,7 +448,190 @@ ipcMain.handle('yoklama-zamanlama-durumu', () => ({ scheduledAt: scheduledScanAt
 
 ipcMain.on('request-status', () => broadcastStatus());
 
+// --- OTOMATİK GÜNCELLEME ---
+// Uygulama her açıldığında GitHub'daki en son release ile kendi versiyonunu
+// karşılaştırır; yeni bir sürüm varsa indirir, kurar ve uygulamayı yeniden başlatır.
+const https = require('https');
+const os = require('os');
+const { spawn } = require('child_process');
+
+const APP_VERSION = require('./package.json').version;
+const UPDATE_REPO_OWNER = 'anilkee';
+const UPDATE_REPO_NAME = 'yoklama-botu';
+const UPDATE_ASSET_NAME = 'YoklamaBotu-win32-x64.zip';
+
+function compareVersions(a, b) {
+    const partsA = String(a).split('.').map(Number);
+    const partsB = String(b).split('.').map(Number);
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i += 1) {
+        const numA = partsA[i] || 0;
+        const numB = partsB[i] || 0;
+        if (numA > numB) return 1;
+        if (numA < numB) return -1;
+    }
+    return 0;
+}
+
+function httpsGetJson(url, redirectCount = 0) {
+    return new Promise((resolve, reject) => {
+        if (redirectCount > 5) {
+            reject(new Error('Çok fazla yönlendirme.'));
+            return;
+        }
+        https.get(url, { headers: { 'User-Agent': 'YoklamaBotu-Updater' } }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume();
+                httpsGetJson(res.headers.location, redirectCount + 1).then(resolve, reject);
+                return;
+            }
+            if (res.statusCode !== 200) {
+                res.resume();
+                reject(new Error(`HTTP ${res.statusCode}`));
+                return;
+            }
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        }).on('error', reject);
+    });
+}
+
+function httpsDownloadFile(url, destPath, redirectCount = 0) {
+    return new Promise((resolve, reject) => {
+        if (redirectCount > 5) {
+            reject(new Error('Çok fazla yönlendirme.'));
+            return;
+        }
+        https.get(url, { headers: { 'User-Agent': 'YoklamaBotu-Updater' } }, (res) => {
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume();
+                httpsDownloadFile(res.headers.location, destPath, redirectCount + 1).then(resolve, reject);
+                return;
+            }
+            if (res.statusCode !== 200) {
+                res.resume();
+                reject(new Error(`HTTP ${res.statusCode}`));
+                return;
+            }
+            const fileStream = fs.createWriteStream(destPath);
+            res.pipe(fileStream);
+            fileStream.on('finish', () => fileStream.close(() => resolve()));
+            fileStream.on('error', reject);
+        }).on('error', reject);
+    });
+}
+
+function runCommand(command, args) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, { windowsHide: true });
+        let stderr = '';
+        child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+        child.on('error', reject);
+        child.on('close', (code) => {
+            if (code === 0) resolve();
+            else reject(new Error(`"${command}" çıkış kodu ${code}: ${stderr}`));
+        });
+    });
+}
+
+// Yeni sürüm bulunup uygulama kapatılmak üzereyse true döner (çağıran taraf
+// bu durumda pencere açma gibi normal başlangıç adımlarını atlamalı).
+async function checkForUpdates() {
+    if (!app.isPackaged) {
+        console.log('[Güncelleme] Geliştirme ortamında çalışıyor (paketlenmemiş), güncelleme kontrolü atlanıyor.');
+        return false;
+    }
+
+    console.log(`[Güncelleme] Mevcut sürüm: ${APP_VERSION}. GitHub'dan kontrol ediliyor...`);
+    let release;
+    try {
+        release = await httpsGetJson(`https://api.github.com/repos/${UPDATE_REPO_OWNER}/${UPDATE_REPO_NAME}/releases/latest`);
+    } catch (error) {
+        console.log(`[Güncelleme] Sürüm bilgisi alınamadı, mevcut sürümle devam ediliyor: ${error.message}`);
+        return false;
+    }
+
+    const latestVersion = String(release.tag_name || '').replace(/^v/i, '');
+    if (!latestVersion || compareVersions(latestVersion, APP_VERSION) <= 0) {
+        console.log(`[Güncelleme] Güncel (GitHub'daki en son sürüm: ${latestVersion || 'bilinmiyor'}).`);
+        return false;
+    }
+
+    const asset = (release.assets || []).find((a) => a.name === UPDATE_ASSET_NAME);
+    if (!asset) {
+        console.log(`[Güncelleme] v${latestVersion} bulundu ama release'de "${UPDATE_ASSET_NAME}" adında dosya yok, atlanıyor.`);
+        return false;
+    }
+
+    console.log(`[Güncelleme] Yeni sürüm bulundu: v${latestVersion}. İndiriliyor...`);
+
+    const stagingDir = path.join(os.tmpdir(), 'yoklama-botu-update');
+    const zipPath = path.join(stagingDir, 'update.zip');
+    const extractDir = path.join(stagingDir, 'extracted');
+
+    try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+        fs.mkdirSync(stagingDir, { recursive: true });
+
+        await httpsDownloadFile(asset.browser_download_url, zipPath);
+        console.log('[Güncelleme] İndirme tamamlandı, açılıyor...');
+
+        await runCommand('powershell.exe', [
+            '-NoProfile', '-NonInteractive', '-Command',
+            `Expand-Archive -Path "${zipPath}" -DestinationPath "${extractDir}" -Force`,
+        ]);
+
+        const installRoot = path.dirname(process.execPath);
+        const exeName = path.basename(process.execPath);
+        const pid = process.pid;
+
+        // Bu süreç tamamen kapanana kadar bekleyip (exe dosya kilidi bırakılsın
+        // diye), yeni dosyaların üzerine kopyalayıp uygulamayı yeniden açan
+        // ve kendini silen küçük bir betik.
+        const batPath = path.join(stagingDir, 'apply-update.bat');
+        const batContent = [
+            '@echo off',
+            ':wait',
+            `tasklist /FI "PID eq ${pid}" 2>NUL | find /I "${pid}" >NUL`,
+            'if not errorlevel 1 (',
+            '  timeout /t 1 /nobreak >NUL',
+            '  goto wait',
+            ')',
+            `xcopy /E /Y /I "${extractDir}\\*" "${installRoot}\\" >NUL`,
+            `start "" "${path.join(installRoot, exeName)}"`,
+            'del "%~f0"',
+        ].join('\r\n');
+        fs.writeFileSync(batPath, batContent);
+
+        console.log(`[Güncelleme] v${latestVersion} kuruluyor, uygulama yeniden başlatılacak...`);
+
+        spawn('cmd.exe', ['/c', batPath], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+        }).unref();
+
+        app.quit();
+        return true;
+    } catch (error) {
+        console.log(`[Güncelleme] Güncelleme uygulanamadı, mevcut sürümle devam ediliyor: ${error.message}`);
+        return false;
+    }
+}
+
 app.on('ready', async () => {
+    const isUpdating = await checkForUpdates().catch((error) => {
+        console.log(`[Güncelleme] Beklenmeyen hata: ${error.message}`);
+        return false;
+    });
+    if (isUpdating) return;
+
     if (isConfigComplete()) {
         startApp();
     } else {
