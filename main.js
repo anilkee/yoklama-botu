@@ -49,6 +49,18 @@ console.log = (...args) => {
     writeDebugLog(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
 };
 
+// Discord kütüphanesi içinde (örn. gateway paket işleyicilerinde) sessizce
+// reddedilen bir promise ya da fırlatılan bir istisna olursa daha önce
+// hiçbir yere yazılmıyordu - "ready" hiç gelmeden bağlantının takılı kalması
+// büyük ihtimalle böyle bir şeyden kaynaklanıyor. Artık bunları da yakalayıp
+// debug.log'a yazıyoruz.
+process.on('unhandledRejection', (reason) => {
+    console.log(`[Hata] Yakalanmamış promise reddi: ${reason && reason.stack ? reason.stack : reason}`);
+});
+process.on('uncaughtException', (error) => {
+    console.log(`[Hata] Yakalanmamış istisna: ${error && error.stack ? error.stack : error}`);
+});
+
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 
 // Aynı anda birden fazla kopya açılmasını engelliyoruz.
@@ -148,14 +160,22 @@ function startConnectWatchdog() {
 
     connectWatchdogTimer = setInterval(() => {
         const elapsedSec = Math.round((Date.now() - connectStartedAt) / 1000);
-        discordStatusDetail = `Bağlanıyor... (${elapsedSec}sn)`;
 
-        if (elapsedSec === 15 || elapsedSec === 30) {
-            console.log(`[Bağlantı] ${elapsedSec} saniyedir "ready" olayı gelmedi, bekleniyor... (ayrıntılar için [Gateway] satırlarına bak)`);
+        // Not: Bazı hesaplarda ilk bağlantı normalden çok uzun sürebiliyor
+        // (soket seviyesinde bağlantı hemen kuruluyor ama kütüphane hesap
+        // verisini işlerken yavaş kalabiliyor). Pencere kapatılırsa (uygulama
+        // "kapanınca herşey kapansın" şeklinde tasarlandığı için) süreç
+        // tamamen sonlanıyor ve bağlanma şansı kalmıyor - bu yüzden burada
+        // kullanıcıyı asla "bir şey bozuk" gibi göstermeyip beklemesini
+        // istiyoruz; hedef sunucu önbelleğe düşer düşmez otomatik devam eder.
+        if (elapsedSec < 60) {
+            discordStatusDetail = `Bağlanıyor... (${elapsedSec}sn) - kapatma, sürebilir`;
+        } else {
+            discordStatusDetail = `Hâlâ bağlanıyor (${elapsedSec}sn) - lütfen pencereyi kapatmadan bekle`;
         }
-        if (elapsedSec >= 45) {
-            console.log(`[Bağlantı] UYARI: ${elapsedSec} saniyedir bağlantı tamamlanmadı. Soket seviyesinde bağlantı kurulmuş olabilir ama kütüphane kendi "ready" olayını hiç ateşlemiyor olabilir (hesapta çok sayıda sunucu/DM/arkadaş varsa iç işleme uzun sürebiliyor). Hedef sunucu önbelleğe düşer düşmez uygulama yine de otomatik devam edecek. debug.log'daki [Gateway] satırları daha fazla ipucu verebilir.`);
-            discordStatusDetail = `Bağlantı ${elapsedSec} saniyedir tamamlanmadı - debug.log'a bak`;
+
+        if (elapsedSec === 15 || elapsedSec === 30 || elapsedSec === 60 || elapsedSec === 120) {
+            console.log(`[Bağlantı] ${elapsedSec} saniyedir "ready" olayı gelmedi. Bu hesapta bilinen bir davranış olabilir - pencere kapatılmadığı sürece arka planda denemeye devam ediyor, hedef sunucu önbelleğe düşünce otomatik devam edecek. (ayrıntılar için [Gateway] ve [Hata] satırlarına bak)`);
         }
         broadcastStatus();
     }, 5000);
