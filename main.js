@@ -154,21 +154,43 @@ function startConnectWatchdog() {
             console.log(`[Bağlantı] ${elapsedSec} saniyedir "ready" olayı gelmedi, bekleniyor... (ayrıntılar için [Gateway] satırlarına bak)`);
         }
         if (elapsedSec >= 45) {
-            console.log(`[Bağlantı] UYARI: ${elapsedSec} saniyedir bağlantı tamamlanmadı. Olası nedenler: (1) token geçersiz/hesapta ek doğrulama isteniyor, (2) ağ/VPN/güvenlik duvarı Discord gateway'ini engelliyor, (3) Discord bu girişte captcha istiyor olabilir. debug.log dosyasındaki [Gateway] satırları daha fazla ipucu verebilir.`);
+            console.log(`[Bağlantı] UYARI: ${elapsedSec} saniyedir bağlantı tamamlanmadı. Soket seviyesinde bağlantı kurulmuş olabilir ama kütüphane kendi "ready" olayını hiç ateşlemiyor olabilir (hesapta çok sayıda sunucu/DM/arkadaş varsa iç işleme uzun sürebiliyor). Hedef sunucu önbelleğe düşer düşmez uygulama yine de otomatik devam edecek. debug.log'daki [Gateway] satırları daha fazla ipucu verebilir.`);
             discordStatusDetail = `Bağlantı ${elapsedSec} saniyedir tamamlanmadı - debug.log'a bak`;
         }
         broadcastStatus();
     }, 5000);
 }
 
-client.on('ready', () => {
-    console.log(`[Bağlantı] Giriş yapıldı: ${client.user.tag}`);
+// "ready" olayı hiç gelmese bile (bkz. yukarıdaki not), bize gerçekten lazım
+// olan tek şey hedef sunucunun önbellekte olması - bu genelde kütüphanenin
+// kendi "ready" olayından çok daha erken gerçekleşiyor. Bu yüzden ayrıca bunu
+// da bağımsız olarak yokluyoruz; hangisi önce olursa "bağlı" sayıyoruz.
+let readyPollTimer = null;
+
+function markConnected(source) {
+    if (discordStatus === 'bağlı') return;
+    console.log(`[Bağlantı] Giriş yapıldı (${source}): ${client.user ? client.user.tag : 'bilinmiyor'}`);
     discordStatus = 'bağlı';
     discordStatusDetail = 'Bağlı';
     stopConnectWatchdog();
     stopGatewayDebugLogging();
+    if (readyPollTimer) {
+        clearInterval(readyPollTimer);
+        readyPollTimer = null;
+    }
     broadcastStatus();
-});
+}
+
+function startReadyPolling() {
+    if (readyPollTimer) clearInterval(readyPollTimer);
+    readyPollTimer = setInterval(() => {
+        if (client.user && client.guilds.cache.has(GUILD_ID)) {
+            markConnected('yedek kontrol - hedef sunucu önbellekte');
+        }
+    }, 1000);
+}
+
+client.on('ready', () => markConnected('ready olayı'));
 
 client.on('error', (error) => {
     console.log(`[Hata] Discord client hatası: ${error.message}`);
@@ -256,6 +278,7 @@ function startApp() {
     });
 
     startConnectWatchdog();
+    startReadyPolling();
     client.login(process.env.USER_TOKEN).catch((error) => {
         console.log(`[Hata] Discord'a giriş yapılamadı: ${error.message}`);
         discordStatus = 'hata';
