@@ -82,6 +82,32 @@ app.on('second-instance', () => {
 
 const { Client } = require('discord.js-selfbot-v13');
 
+// --- KÜTÜPHANE YAMASI: READY paketinde çökmeyi önle ---
+// KÖK NEDEN (debug.log ile teşhis edildi): Bazı hesaplarda Discord,
+// READY paketinde "friend_source_flags" alanını null gönderiyor.
+// discord.js-selfbot-v13'ün ClientUserSettingManager._patch metodu bunu
+// kontrolsüz okuyup "Cannot read properties of null (reading 'all')" ile
+// çöküyor. Bu çökme READY.js içinde yakalanmadığı için, sunucu bilgisi hiç
+// önbelleğe düşmüyor ve uygulama sonsuza kadar "bağlanıyor" görünüyor.
+// Kütüphaneyi değiştiremeyeceğimiz için sorunlu metodu burada, Client
+// oluşturulmadan önce, hatayı yutacak şekilde yamıyoruz.
+try {
+    // eslint-disable-next-line global-require
+    const ClientUserSettingManager = require('discord.js-selfbot-v13/src/managers/ClientUserSettingManager');
+    const originalSettingsPatch = ClientUserSettingManager.prototype._patch;
+    ClientUserSettingManager.prototype._patch = function patchedSettingsPatch(data) {
+        try {
+            return originalSettingsPatch.call(this, data);
+        } catch (error) {
+            console.log(`[Yama] Kullanıcı ayarları işlenirken hata oluştu, atlanıp devam ediliyor (uygulamanın çalışmasını etkilemez): ${error.message}`);
+            return this;
+        }
+    };
+    console.log('[Yama] ClientUserSettingManager._patch çökmeye karşı korumaya alındı.');
+} catch (error) {
+    console.log(`[Yama] ClientUserSettingManager yaması uygulanamadı (kütüphane sürümü değişmiş olabilir, atlanıyor): ${error.message}`);
+}
+
 // --- YOKLAMA (SES KONTROLÜ) AYARLARI ---
 // Bu proje tek bir sunucuya özel hazırlandığı için ayarlar koddan sabit veriliyor.
 const GUILD_ID = '1469033815518482445';
