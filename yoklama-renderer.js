@@ -12,20 +12,24 @@ const statusText = document.getElementById('statusText');
 let hasAutoScanned = false;
 
 function applyStatus(status) {
+    // Eski format (düz string) ile yeni format ({state, detail}) ikisini de kabul et.
+    const state = (status && typeof status === 'object') ? status.state : status;
+    const detail = (status && typeof status === 'object') ? status.detail : null;
+
     statusDot.classList.remove('warn', 'ok', 'danger');
-    if (status === 'bağlı') {
+    if (state === 'bağlı') {
         statusDot.classList.add('ok');
-        statusText.textContent = 'Bağlı';
+        statusText.textContent = detail || 'Bağlı';
         if (!hasAutoScanned) {
             hasAutoScanned = true;
             runScan();
         }
-    } else if (status === 'hata') {
+    } else if (state === 'hata') {
         statusDot.classList.add('danger');
-        statusText.textContent = 'Bağlantı hatası';
+        statusText.textContent = detail || 'Bağlantı hatası';
     } else {
         statusDot.classList.add('warn');
-        statusText.textContent = 'Bağlanıyor...';
+        statusText.textContent = detail || 'Bağlanıyor...';
     }
 }
 

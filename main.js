@@ -100,28 +100,88 @@ const ROLE_COMMAND_CHANNEL_ID = '1504900865507463259';
 let mainWindow;
 let setupWindow;
 let discordStatus = 'bağlanıyor'; // 'bağlanıyor' | 'bağlı' | 'hata'
+let discordStatusDetail = 'Bağlanıyor...';
 
 function broadcastStatus() {
-    if (mainWindow) mainWindow.webContents.send('status', discordStatus);
+    if (mainWindow) mainWindow.webContents.send('status', { state: discordStatus, detail: discordStatusDetail });
 }
 
 const client = new Client({ checkUpdate: false });
 
+// --- BAĞLANTI TEŞHİS ARAÇLARI ---
+// "Bağlanıyor..." durumunda takılı kalma (giriş yapılıyor ama 'ready' hiç
+// gelmiyor) sorununu teşhis etmek için: (1) geçen süreyi ekranda gösteriyoruz,
+// (2) belli bir süreden sonra olası nedenleri açıkça yazıyoruz, (3) bağlantı
+// kurulana kadar Discord gateway'inden gelen ham debug mesajlarını
+// debug.log'a yazıyoruz (bağlandıktan sonra logun şişmemesi için kapatıyoruz).
+let connectWatchdogTimer = null;
+let connectStartedAt = null;
+let gatewayDebugHandler = null;
+
+function startGatewayDebugLogging() {
+    if (gatewayDebugHandler) return;
+    gatewayDebugHandler = (info) => {
+        console.log(`[Gateway] ${info}`);
+    };
+    client.on('debug', gatewayDebugHandler);
+}
+
+function stopGatewayDebugLogging() {
+    if (gatewayDebugHandler) {
+        client.removeListener('debug', gatewayDebugHandler);
+        gatewayDebugHandler = null;
+    }
+}
+
+function stopConnectWatchdog() {
+    if (connectWatchdogTimer) {
+        clearInterval(connectWatchdogTimer);
+        connectWatchdogTimer = null;
+    }
+}
+
+function startConnectWatchdog() {
+    stopConnectWatchdog();
+    connectStartedAt = Date.now();
+    startGatewayDebugLogging();
+
+    connectWatchdogTimer = setInterval(() => {
+        const elapsedSec = Math.round((Date.now() - connectStartedAt) / 1000);
+        discordStatusDetail = `Bağlanıyor... (${elapsedSec}sn)`;
+
+        if (elapsedSec === 15 || elapsedSec === 30) {
+            console.log(`[Bağlantı] ${elapsedSec} saniyedir "ready" olayı gelmedi, bekleniyor... (ayrıntılar için [Gateway] satırlarına bak)`);
+        }
+        if (elapsedSec >= 45) {
+            console.log(`[Bağlantı] UYARI: ${elapsedSec} saniyedir bağlantı tamamlanmadı. Olası nedenler: (1) token geçersiz/hesapta ek doğrulama isteniyor, (2) ağ/VPN/güvenlik duvarı Discord gateway'ini engelliyor, (3) Discord bu girişte captcha istiyor olabilir. debug.log dosyasındaki [Gateway] satırları daha fazla ipucu verebilir.`);
+            discordStatusDetail = `Bağlantı ${elapsedSec} saniyedir tamamlanmadı - debug.log'a bak`;
+        }
+        broadcastStatus();
+    }, 5000);
+}
+
 client.on('ready', () => {
     console.log(`[Bağlantı] Giriş yapıldı: ${client.user.tag}`);
     discordStatus = 'bağlı';
+    discordStatusDetail = 'Bağlı';
+    stopConnectWatchdog();
+    stopGatewayDebugLogging();
     broadcastStatus();
 });
 
 client.on('error', (error) => {
     console.log(`[Hata] Discord client hatası: ${error.message}`);
     discordStatus = 'hata';
+    discordStatusDetail = `Bağlantı hatası: ${error.message}`;
+    stopConnectWatchdog();
     broadcastStatus();
 });
 
 client.on('disconnect', () => {
     console.log('[Bağlantı] Discord bağlantısı koptu.');
     discordStatus = 'hata';
+    discordStatusDetail = 'Discord bağlantısı koptu.';
+    stopConnectWatchdog();
     broadcastStatus();
 });
 
@@ -194,9 +254,12 @@ function startApp() {
         mainWindow = null;
     });
 
+    startConnectWatchdog();
     client.login(process.env.USER_TOKEN).catch((error) => {
         console.log(`[Hata] Discord'a giriş yapılamadı: ${error.message}`);
         discordStatus = 'hata';
+        discordStatusDetail = `Giriş yapılamadı: ${error.message}`;
+        stopConnectWatchdog();
         broadcastStatus();
         dialog.showMessageBox(mainWindow, {
             type: 'error',
@@ -247,8 +310,16 @@ async function fetchRecentExcuses() {
         const options = { limit: 100 };
         if (beforeId) options.before = beforeId;
 
-        // eslint-disable-next-line no-await-in-loop
-        const batch = await channel.messages.fetch(options);
+        let batch;
+        try {
+            // eslint-disable-next-line no-await-in-loop
+            batch = await channel.messages.fetch(options);
+        } catch (error) {
+            // Mesaj geçmişi okunamıyorsa (izin sorunu vb.) taramanın tamamını
+            // çökertmek yerine o ana kadar toplananlarla devam ediyoruz.
+            console.log(`[Yoklama] Mazaret kanalı mesajları alınamadı (sayfa ${page + 1}), o ana kadar toplananlarla devam ediliyor: ${error.message}`);
+            break;
+        }
         if (batch.size === 0) break;
 
         let reachedCutoff = false;
@@ -287,6 +358,9 @@ async function runYoklamaScan() {
         }
     }
     if (!guild) throw new Error('Sunucu bulunamadı, GUILD_ID hatalı olabilir.');
+    if (!guild.shard) {
+        throw new Error('Bu sunucu için gateway bağlantısı (shard) henüz hazır değil - hesap sunucuya tam bağlanamamış olabilir. Birkaç saniye bekleyip tekrar dene; sorun devam ederse hesabın gerçekten bu sunucuda üye olduğundan emin ol.');
+    }
 
     try {
         await guild.members.fetch();
@@ -368,7 +442,18 @@ function waitForRoleBotReply(timeoutMs = 6000) {
 
 async function giveNextWarningRole(memberId) {
     const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
-    const member = await guild.members.fetch(memberId);
+    if (!guild) throw new Error('Sunucu bulunamadı, GUILD_ID hatalı olabilir.');
+    if (!guild.shard) {
+        throw new Error('Bu sunucu için gateway bağlantısı (shard) henüz hazır değil - hesap sunucuya tam bağlanamamış olabilir. Birkaç saniye bekleyip tekrar dene.');
+    }
+
+    let member;
+    try {
+        member = await guild.members.fetch(memberId);
+    } catch (error) {
+        throw new Error(`Kişi bilgisi alınamadı: ${error.message}`);
+    }
+
     const nextRole = getNextWarningRole(member);
     if (!nextRole) {
         return { ok: false, reason: 'max', currentTierLabel: WARNING_ROLES[WARNING_ROLES.length - 1].label };
