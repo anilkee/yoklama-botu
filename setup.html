@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Yoklama Botu - İlk Kurulum</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: "Segoe UI", system-ui, sans-serif;
+            background: #090b0a;
+            color: #d9f3ea;
+        }
+        h1 { font-size: 15px; margin: 0 0 4px; color: #d9f3ea; font-weight: 600; }
+        p.desc { font-size: 11.5px; color: #7fa199; margin: 0 0 16px; line-height: 1.5; }
+        .field { margin-bottom: 14px; }
+        .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #d9f3ea; }
+        .field .hint { display: block; font-size: 11px; color: #7fa199; margin-bottom: 6px; }
+        .field input {
+            width: 100%; padding: 9px 10px; border-radius: 6px;
+            background: #161c19; color: #d9f3ea; border: 1px solid #263029; font-size: 12px;
+        }
+        button.primary {
+            width: 100%; background: #49e6ba; color: #090b0a; font-weight: 700;
+            border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+            font-family: "Segoe UI", sans-serif; transition: opacity .15s; margin-top: 6px;
+        }
+        button.primary:hover { opacity: .88; }
+        button.primary:disabled { opacity: .6; cursor: default; }
+        #errorBox {
+            display: none; background: rgba(255,98,89,0.12); color: #ff6259;
+            border: 1px solid rgba(255,98,89,0.35);
+            padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 14px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Yoklama Botu - İlk Kurulum</h1>
+    <p class="desc">Bu paneli çalıştıracak Discord hesabının token'ını gir, gerisi hazır.</p>
+
+    <div id="errorBox"></div>
+
+    <div class="field">
+        <label>Discord Hesap Token'ı</label>
+        <span class="hint">Bu programı hangi Discord hesabı çalıştıracaksa onun token'ı.</span>
+        <input type="text" id="USER_TOKEN" placeholder="Discord token">
+    </div>
+
+    <button class="primary" id="saveBtn">Kaydet ve Başlat</button>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+
+        const errorBox = document.getElementById('errorBox');
+        const saveBtn = document.getElementById('saveBtn');
+
+        saveBtn.addEventListener('click', () => {
+            const values = { USER_TOKEN: document.getElementById('USER_TOKEN').value.trim() };
+            errorBox.style.display = 'none';
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Kaydediliyor...';
+            ipcRenderer.send('save-setup', values);
+        });
+
+        ipcRenderer.on('setup-error', (event, message) => {
+            errorBox.textContent = message;
+            errorBox.style.display = 'block';
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Kaydet ve Başlat';
+        });
+    </script>
+</body>
+</html>

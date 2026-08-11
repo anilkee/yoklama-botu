@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Yoklama Botu - Panel</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; }
+        body {
+            margin: 0;
+            padding: 18px;
+            font-family: "Segoe UI", system-ui, sans-serif;
+            background: #090b0a;
+            color: #d9f3ea;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; flex-shrink: 0; }
+        .header h1 { font-size: 15px; margin: 0; color: #d9f3ea; font-weight: 600; }
+        .header p { font-size: 11px; color: #7fa199; margin: 2px 0 0; }
+
+        .status-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: #7fa199; flex-shrink: 0; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .status-dot.warn { background: #f0b84a; box-shadow: 0 0 5px #f0b84a; }
+        .status-dot.ok { background: #49e6ba; box-shadow: 0 0 5px #49e6ba; }
+        .status-dot.danger { background: #ff6259; box-shadow: 0 0 5px #ff6259; }
+
+        .card {
+            background: #101513; border: 1px solid #263029;
+            border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; flex-shrink: 0;
+        }
+        .card h2 {
+            font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #49e6ba;
+            margin: 0 0 10px; font-weight: 600;
+        }
+
+        .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        button {
+            background: #49e6ba; color: #090b0a; font-weight: 700;
+            border: none; padding: 9px 14px; border-radius: 6px; cursor: pointer; font-size: 12px;
+            font-family: "Segoe UI", sans-serif; transition: opacity .15s;
+        }
+        button:hover { opacity: .88; }
+        button:disabled { opacity: .5; cursor: default; }
+        button.secondary { background: #1c2320; color: #d9f3ea; border: 1px solid #263029; }
+        button.small { padding: 6px 10px; font-size: 11px; }
+
+        .scanStatus { font-size: 11px; color: #7fa199; }
+        .summary { font-size: 11.5px; color: #d9f3ea; margin-top: 8px; }
+
+        .sched-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .sched-row input {
+            width: 56px; padding: 7px 8px; border-radius: 6px;
+            background: #161c19; color: #d9f3ea; border: 1px solid #263029; font-size: 12px; text-align: center;
+        }
+        .sched-row label { font-size: 11px; color: #7fa199; }
+        .countdown { font-size: 11.5px; color: #49e6ba; font-weight: 600; margin-left: auto; }
+
+        #errorBox {
+            display: none; background: rgba(255,98,89,0.12); color: #ff6259;
+            border: 1px solid rgba(255,98,89,0.35);
+            padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 12px; flex-shrink: 0;
+        }
+
+        #listWrap { flex: 1; overflow-y: auto; min-height: 0; }
+        #emptyState {
+            display: none; text-align: center; color: #7fa199; font-size: 12.5px;
+            padding: 40px 10px;
+        }
+
+        .row {
+            display: flex; align-items: flex-start; gap: 10px;
+            background: #101513; border: 1px solid #263029; border-radius: 8px;
+            padding: 10px 12px; margin-bottom: 8px;
+        }
+        .avatar { width: 36px; height: 36px; border-radius: 50%; background: #1c2320; flex-shrink: 0; }
+        .info { flex: 1; min-width: 0; }
+        .name { font-size: 12.5px; font-weight: 600; color: #d9f3ea; }
+        .name .tag { font-size: 10.5px; color: #7fa199; font-weight: 400; margin-left: 4px; }
+        .excuse { font-size: 11.5px; color: #c7ded6; margin-top: 4px; word-break: break-word; }
+        .reactions { margin-top: 5px; }
+        .pill {
+            display: inline-block; background: #1c2320; border: 1px solid #263029;
+            border-radius: 999px; padding: 2px 8px; font-size: 11px; margin-right: 4px; margin-bottom: 4px;
+        }
+        .pill.muted { color: #7fa199; }
+        .tier { font-size: 10.5px; margin-top: 5px; }
+        .muted { color: #7fa199; }
+
+        .action { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
+        .roleBtn { white-space: nowrap; }
+        .roleMsg { font-size: 10.5px; text-align: right; }
+        .roleMsg.ok { color: #49e6ba; }
+        .roleMsg.error { color: #ff6259; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div>
+            <h1>Yoklama Paneli</h1>
+            <p>Sesde olmayanlar, mazaretleri ve rol verme</p>
+        </div>
+        <div class="status-row">
+            <span class="status-dot warn" id="statusDot"></span>
+            <span>Discord:</span>
+            <span id="statusText">Bağlanıyor...</span>
+        </div>
+    </div>
+
+    <div id="errorBox"></div>
+
+    <div class="card">
+        <h2>Tarama</h2>
+        <div class="toolbar">
+            <button id="scanBtn">Taramayı Başlat</button>
+            <span class="scanStatus" id="scanStatus">Henüz tarama yapılmadı.</span>
+        </div>
+        <div class="summary" id="summaryText"></div>
+    </div>
+
+    <div class="card">
+        <h2>Sonraki Taramayı Zamanla</h2>
+        <div class="sched-row">
+            <label>Saat</label>
+            <input type="number" id="schedHours" min="0" max="72" value="0">
+            <label>Dakika</label>
+            <input type="number" id="schedMinutes" min="0" max="59" value="30">
+            <button class="secondary small" id="scheduleBtn">Zamanla</button>
+            <button class="secondary small" id="cancelScheduleBtn" style="display:none;">İptal Et</button>
+            <span class="countdown" id="countdownText"></span>
+        </div>
+    </div>
+
+    <div id="listWrap">
+        <div id="emptyState">🎉 Herkes sesde, mazaret kontrolüne gerek yok.</div>
+        <div id="list"></div>
+    </div>
+
+    <script>
+        require('./yoklama-renderer.js');
+    </script>
+</body>
+</html>

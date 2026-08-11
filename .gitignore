@@ -1,0 +1,5 @@
+node_modules/
+build/
+config.env
+debug.log
+debug.log.old
