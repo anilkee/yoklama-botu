@@ -61,7 +61,7 @@ if (!gotSingleInstanceLock) {
 app.setAppUserModelId('com.yoklamabotu.app');
 
 app.on('second-instance', () => {
-    const existingWindow = mainWindow || setupWindow;
+    const existingWindow = mainWindow || setupWindow || updateProgressWindow;
     if (existingWindow) {
         if (existingWindow.isMinimized()) existingWindow.restore();
         existingWindow.focus();
@@ -99,6 +99,7 @@ const ROLE_COMMAND_CHANNEL_ID = '1504900865507463259';
 
 let mainWindow;
 let setupWindow;
+let updateProgressWindow;
 let discordStatus = 'bağlanıyor'; // 'bağlanıyor' | 'bağlı' | 'hata'
 let discordStatusDetail = 'Bağlanıyor...';
 
@@ -625,6 +626,64 @@ function runCommand(command, args) {
     });
 }
 
+// Bir promise'i belirtilen sürede tamamlanmazsa reddeder - indirme/açma gibi
+// adımların sonsuza kadar asılı kalıp uygulamayı hiç açılmaz hale getirmesini
+// engellemek için (bkz. "bot açılmıyor" raporu: Expand-Archive büyük zip'lerde
+// çok yavaş kalabiliyor, hiçbir görünür pencere olmadan).
+function withTimeout(promise, ms, label) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            reject(new Error(`${label} zaman aşımına uğradı (${Math.round(ms / 1000)}sn)`));
+        }, ms);
+        promise.then(
+            (value) => { clearTimeout(timer); resolve(value); },
+            (error) => { clearTimeout(timer); reject(error); },
+        );
+    });
+}
+
+// Windows 10/11'de yerleşik gelen tar.exe (bsdtar), PowerShell'in
+// Expand-Archive'ından çok daha hızlı - node_modules gibi binlerce küçük
+// dosya içeren zip'lerde Expand-Archive dakikalarca sürüp hiçbir geri
+// bildirim vermeden asılı kalabiliyordu. tar başarısız olursa Expand-Archive'a
+// geri dönüyoruz.
+async function extractZip(zipPath, destDir) {
+    fs.mkdirSync(destDir, { recursive: true });
+    try {
+        await runCommand('tar.exe', ['-xf', zipPath, '-C', destDir]);
+        return;
+    } catch (error) {
+        console.log(`[Güncelleme] tar.exe ile açılamadı, PowerShell Expand-Archive deneniyor: ${error.message}`);
+    }
+    await runCommand('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command',
+        `Expand-Archive -Path "${zipPath}" -DestinationPath "${destDir}" -Force`,
+    ]);
+}
+
+function showUpdateProgressWindow() {
+    if (updateProgressWindow) return;
+    updateProgressWindow = new BrowserWindow({
+        width: 380,
+        height: 150,
+        title: 'Yoklama Botu - Güncelleniyor',
+        autoHideMenuBar: true,
+        resizable: false,
+        webPreferences: {
+            nodeIntegration: true,
+            contextIsolation: false
+        }
+    });
+    updateProgressWindow.loadFile('update-progress.html');
+    updateProgressWindow.on('closed', () => {
+        updateProgressWindow = null;
+    });
+}
+
+function setUpdateProgressText(text) {
+    if (updateProgressWindow) updateProgressWindow.webContents.send('update-progress', text);
+}
+
 // Yeni sürüm bulunup uygulama kapatılmak üzereyse true döner (çağıran taraf
 // bu durumda pencere açma gibi normal başlangıç adımlarını atlamalı).
 async function checkForUpdates() {
@@ -636,7 +695,11 @@ async function checkForUpdates() {
     console.log(`[Güncelleme] Mevcut sürüm: ${APP_VERSION}. GitHub'dan kontrol ediliyor...`);
     let release;
     try {
-        release = await httpsGetJson(`https://api.github.com/repos/${UPDATE_REPO_OWNER}/${UPDATE_REPO_NAME}/releases/latest`);
+        release = await withTimeout(
+            httpsGetJson(`https://api.github.com/repos/${UPDATE_REPO_OWNER}/${UPDATE_REPO_NAME}/releases/latest`),
+            20000,
+            'Sürüm bilgisi alma',
+        );
     } catch (error) {
         console.log(`[Güncelleme] Sürüm bilgisi alınamadı, mevcut sürümle devam ediliyor: ${error.message}`);
         return false;
@@ -655,6 +718,8 @@ async function checkForUpdates() {
     }
 
     console.log(`[Güncelleme] Yeni sürüm bulundu: v${latestVersion}. İndiriliyor...`);
+    showUpdateProgressWindow();
+    setUpdateProgressText(`Yeni sürüm indiriliyor (v${latestVersion})...`);
 
     const stagingDir = path.join(os.tmpdir(), 'yoklama-botu-update');
     const zipPath = path.join(stagingDir, 'update.zip');
@@ -664,13 +729,11 @@ async function checkForUpdates() {
         fs.rmSync(stagingDir, { recursive: true, force: true });
         fs.mkdirSync(stagingDir, { recursive: true });
 
-        await httpsDownloadFile(asset.browser_download_url, zipPath);
+        await withTimeout(httpsDownloadFile(asset.browser_download_url, zipPath), 8 * 60 * 1000, 'İndirme');
         console.log('[Güncelleme] İndirme tamamlandı, açılıyor...');
+        setUpdateProgressText('İndirme tamamlandı, açılıyor...');
 
-        await runCommand('powershell.exe', [
-            '-NoProfile', '-NonInteractive', '-Command',
-            `Expand-Archive -Path "${zipPath}" -DestinationPath "${extractDir}" -Force`,
-        ]);
+        await withTimeout(extractZip(zipPath, extractDir), 4 * 60 * 1000, 'Açma işlemi');
 
         const installRoot = path.dirname(process.execPath);
         const exeName = path.basename(process.execPath);
@@ -695,6 +758,7 @@ async function checkForUpdates() {
         fs.writeFileSync(batPath, batContent);
 
         console.log(`[Güncelleme] v${latestVersion} kuruluyor, uygulama yeniden başlatılacak...`);
+        setUpdateProgressText('Kuruluyor, birazdan yeniden açılacak...');
 
         spawn('cmd.exe', ['/c', batPath], {
             detached: true,
@@ -706,6 +770,10 @@ async function checkForUpdates() {
         return true;
     } catch (error) {
         console.log(`[Güncelleme] Güncelleme uygulanamadı, mevcut sürümle devam ediliyor: ${error.message}`);
+        if (updateProgressWindow) {
+            updateProgressWindow.close();
+            updateProgressWindow = null;
+        }
         return false;
     }
 }
