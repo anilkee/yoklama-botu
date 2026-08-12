@@ -49,8 +49,14 @@ const scheduleBtn = document.getElementById('scheduleBtn');
 const cancelScheduleBtn = document.getElementById('cancelScheduleBtn');
 const countdownText = document.getElementById('countdownText');
 
+const selectedCountEl = document.getElementById('selectedCount');
+const bulkReasonEl = document.getElementById('bulkReason');
+const bulkWarnBtn = document.getElementById('bulkWarnBtn');
+const bulkProgressEl = document.getElementById('bulkProgress');
+
 let countdownInterval = null;
 let lastResults = [];
+const selectedIds = new Set();
 
 const WARNING_LADDER = ['Sözlü Uyarı', '1x', '2x', '3x'];
 
@@ -87,9 +93,16 @@ function roleButtonLabel(member) {
         : `${member.nextTierLabel} Ver`;
 }
 
+function updateSelectedCount() {
+    selectedCountEl.textContent = `${selectedIds.size} kişi seçili`;
+    bulkWarnBtn.disabled = selectedIds.size === 0 || !bulkReasonEl.value.trim();
+}
+
 function renderRow(member) {
     const row = document.createElement('div');
     row.className = 'row';
+    row.dataset.id = member.id;
+    if (selectedIds.has(member.id)) row.classList.add('selected');
 
     row.innerHTML = `
         <img class="avatar" src="${member.avatarURL}" alt="">
@@ -100,6 +113,10 @@ function renderRow(member) {
             <div class="tier muted">Mevcut kademe: ${member.currentTierLabel || 'Yok'}</div>
         </div>
         <div class="action">
+            <div class="selectBtns">
+                <button class="small selBtn selPlus${selectedIds.has(member.id) ? ' active' : ''}" data-id="${member.id}" title="Toplu uyarı için seç">+</button>
+                <button class="small selBtn selMinus" data-id="${member.id}" title="Seçimden çıkar">-</button>
+            </div>
             <button class="roleBtn small" data-id="${member.id}">${roleButtonLabel(member)}</button>
             <div class="roleMsg" data-id="${member.id}"></div>
         </div>
@@ -125,6 +142,33 @@ function renderResults(data) {
     document.querySelectorAll('.roleBtn').forEach((btn) => {
         btn.addEventListener('click', onRoleButtonClick);
     });
+    document.querySelectorAll('.selPlus').forEach((btn) => {
+        btn.addEventListener('click', () => selectMember(btn.dataset.id));
+    });
+    document.querySelectorAll('.selMinus').forEach((btn) => {
+        btn.addEventListener('click', () => deselectMember(btn.dataset.id));
+    });
+    updateSelectedCount();
+}
+
+function selectMember(memberId) {
+    selectedIds.add(memberId);
+    const row = listEl.querySelector(`.row[data-id="${memberId}"]`);
+    if (row) {
+        row.classList.add('selected');
+        row.querySelector('.selPlus').classList.add('active');
+    }
+    updateSelectedCount();
+}
+
+function deselectMember(memberId) {
+    selectedIds.delete(memberId);
+    const row = listEl.querySelector(`.row[data-id="${memberId}"]`);
+    if (row) {
+        row.classList.remove('selected');
+        row.querySelector('.selPlus').classList.remove('active');
+    }
+    updateSelectedCount();
 }
 
 async function onRoleButtonClick(evt) {
@@ -154,14 +198,24 @@ async function onRoleButtonClick(evt) {
         : `Gönderildi: ${result.givenLabel} (bot cevabı yakalanamadı, Discord'dan kontrol et)`;
     msgEl.className = 'roleMsg ok';
 
+    applyGivenRoleToRow(memberId, result.givenLabel);
+}
+
+// Bir kişiye rol verildikten sonra (tekli ya da toplu akıştan), o satırın
+// kademe bilgisini ve "Rol Ver" butonunun metnini güncel tutar.
+function applyGivenRoleToRow(memberId, givenLabel) {
     const member = lastResults.find((m) => m.id === memberId);
-    if (member) {
-        member.currentTierLabel = result.givenLabel;
-        const idx = WARNING_LADDER.indexOf(result.givenLabel);
-        member.nextTierLabel = idx >= 0 && idx < WARNING_LADDER.length - 1 ? WARNING_LADDER[idx + 1] : null;
-        member.isMaxTier = idx === WARNING_LADDER.length - 1;
-        btn.textContent = roleButtonLabel(member);
-    }
+    if (!member) return;
+    member.currentTierLabel = givenLabel;
+    const idx = WARNING_LADDER.indexOf(givenLabel);
+    member.nextTierLabel = idx >= 0 && idx < WARNING_LADDER.length - 1 ? WARNING_LADDER[idx + 1] : null;
+    member.isMaxTier = idx === WARNING_LADDER.length - 1;
+
+    const btn = listEl.querySelector(`.roleBtn[data-id="${memberId}"]`);
+    if (btn) btn.textContent = roleButtonLabel(member);
+
+    const tierEl = listEl.querySelector(`.row[data-id="${memberId}"] .tier`);
+    if (tierEl) tierEl.textContent = `Mevcut kademe: ${member.currentTierLabel || 'Yok'}`;
 }
 
 async function runScan() {
@@ -243,6 +297,60 @@ ipcRenderer.on('yoklama-otomatik-sonuc', (event, result) => {
     }
     scanStatus.textContent = `Son tarama (otomatik): ${formatDate(result.data.scannedAt)}`;
     renderResults(result.data);
+});
+
+// --- TOPLU UYARI ---
+bulkReasonEl.addEventListener('input', updateSelectedCount);
+
+ipcRenderer.on('yoklama-toplu-uyari-ilerleme', (event, progress) => {
+    bulkProgressEl.textContent = `İşleniyor: ${progress.current}/${progress.total}...`;
+});
+
+bulkWarnBtn.addEventListener('click', async () => {
+    const memberIds = [...selectedIds];
+    const reason = bulkReasonEl.value.trim();
+    if (memberIds.length === 0 || !reason) return;
+
+    bulkWarnBtn.disabled = true;
+    bulkReasonEl.disabled = true;
+    bulkProgressEl.textContent = `İşleniyor: 0/${memberIds.length}...`;
+    hideError();
+
+    const result = await ipcRenderer.invoke('yoklama-toplu-uyari-ver', memberIds, reason);
+
+    bulkReasonEl.disabled = false;
+
+    if (!result.ok) {
+        bulkProgressEl.textContent = '';
+        showError(`Toplu uyarı başarısız: ${result.error}`);
+        updateSelectedCount();
+        return;
+    }
+
+    const { warned, skipped, failed, announceError } = result.data;
+
+    warned.forEach(({ id, givenLabel }) => {
+        applyGivenRoleToRow(id, givenLabel);
+        deselectMember(id);
+    });
+    skipped.forEach((s) => deselectMember(s.id));
+    failed.forEach((f) => deselectMember(f.id));
+
+    let summary = `Tamamlandı: ${warned.length} kişiye uyarı verildi.`;
+    if (failed.length) summary += ` ${failed.length} kişide hata oluştu.`;
+    if (announceError) summary += ` Duyuru mesajı gönderilemedi: ${announceError}`;
+    bulkProgressEl.textContent = summary;
+
+    if (warned.length > 0) {
+        bulkReasonEl.value = '';
+    }
+
+    if (skipped.length > 0) {
+        const names = skipped.map((s) => s.tag).join('\n');
+        alert(`Şu kişiler zaten en üst kademede (3x) olduğu için atlandı, rol verilmedi ve duyuru mesajına eklenmedi:\n\n${names}`);
+    }
+
+    updateSelectedCount();
 });
 
 // Panel açılınca bekleyen bir zamanlama varsa geri say

@@ -135,6 +135,15 @@ const WARNING_ROLES = [
 const ROLE_BOT_ID = '1472695273418522657';
 const ROLE_COMMAND_CHANNEL_ID = '1504900865507463259';
 
+// Toplu uyarı verildiğinde duyuru mesajının (# Uyarı alan / # Uyarı veren ...)
+// gönderileceği kanal.
+const WARNING_ANNOUNCE_CHANNEL_ID = '1483232323674701835';
+
+// Toplu uyarı verilen kişi başına gönderimler arasında küçük bir bekleme -
+// arka arkaya çok hızlı slash komutu göndermek rate limit/şüpheli davranış
+// riskini artırır.
+const BULK_WARNING_DELAY_MS = 1200;
+
 let mainWindow;
 let setupWindow;
 let updateProgressWindow;
@@ -544,6 +553,103 @@ async function giveNextWarningRole(memberId) {
     console.log(`[Yoklama] ${member.user.tag} (${memberId}) için "/rol-ver" gönderildi: ${nextRole.label} (${nextRole.id}). Bot cevabı: ${botReply || '(yakalanamadı)'}`);
     return { ok: true, givenLabel: nextRole.label, botReply };
 }
+
+function formatWarningEndDate() {
+    const end = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const day = String(end.getDate()).padStart(2, '0');
+    const month = String(end.getMonth() + 1).padStart(2, '0');
+    const year = end.getFullYear();
+    return `${day}.${month}.${year}`;
+}
+
+function buildWarningAnnounceMessage(warnedMemberIds, reason) {
+    const warnedMentions = warnedMemberIds.map((id) => `<@${id}>`).join('  ');
+    const ladderMentions = WARNING_ROLES.map((role) => `<@&${role.id}>`).join(' Olanlara ');
+    const selfId = client.user.id;
+    return [
+        `# Uyarı alan :  ${warnedMentions}`,
+        `# Uyarı veren : <@${selfId}>`,
+        `# Uyarı sebebi : ${reason}`,
+        `# Uyarı : ${ladderMentions}`,
+        `# Uyarı bitiş tarihi : ${formatWarningEndDate()}`,
+        `# Hatalı Oldugunu Düşünen Var İse   <@${selfId}>     DM Den Ulaşabilir`,
+    ].join('\n');
+}
+
+// Seçilen birden fazla kişiye tek tek (kendi merdiven kademesine göre) rol
+// verir, en üst kademede olanları atlayıp bildirir, ardından tek bir duyuru
+// mesajı gönderir. İlerlemeyi mainWindow'a olaylarla bildirir.
+async function giveBulkWarning(memberIds, reason) {
+    const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
+    if (!guild) throw new Error('Sunucu bulunamadı, GUILD_ID hatalı olabilir.');
+    if (!guild.shard) {
+        throw new Error('Bu sunucu için gateway bağlantısı (shard) henüz hazır değil - hesap sunucuya tam bağlanamamış olabilir.');
+    }
+
+    const warned = []; // { id, givenLabel }
+    const skipped = []; // { id, tag } - zaten en üst kademede olanlar
+    const failed = []; // { id, error }
+
+    for (let i = 0; i < memberIds.length; i += 1) {
+        const memberId = memberIds[i];
+
+        if (mainWindow) {
+            mainWindow.webContents.send('yoklama-toplu-uyari-ilerleme', {
+                current: i + 1,
+                total: memberIds.length,
+            });
+        }
+
+        try {
+            // eslint-disable-next-line no-await-in-loop
+            const result = await giveNextWarningRole(memberId);
+            if (result.ok) {
+                warned.push({ id: memberId, givenLabel: result.givenLabel });
+            } else if (result.reason === 'max') {
+                let tag = memberId;
+                try {
+                    // eslint-disable-next-line no-await-in-loop
+                    const member = await guild.members.fetch(memberId);
+                    tag = member.user.tag;
+                } catch (error) {
+                    // tag alınamazsa ID ile devam
+                }
+                skipped.push({ id: memberId, tag });
+            }
+        } catch (error) {
+            failed.push({ id: memberId, error: error.message });
+        }
+
+        if (i < memberIds.length - 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((resolve) => setTimeout(resolve, BULK_WARNING_DELAY_MS));
+        }
+    }
+
+    let announceError = null;
+    if (warned.length > 0) {
+        try {
+            const channel = await client.channels.fetch(WARNING_ANNOUNCE_CHANNEL_ID);
+            if (!channel) throw new Error('Uyarı kanalı bulunamadı, WARNING_ANNOUNCE_CHANNEL_ID hatalı olabilir.');
+            await channel.send(buildWarningAnnounceMessage(warned.map((w) => w.id), reason));
+            console.log(`[Yoklama] Toplu uyarı duyurusu gönderildi: ${warned.length} kişi.`);
+        } catch (error) {
+            announceError = error.message;
+            console.log(`[Yoklama] Toplu uyarı duyuru mesajı gönderilemedi: ${error.message}`);
+        }
+    }
+
+    return { warned, skipped, failed, announceError };
+}
+
+ipcMain.handle('yoklama-toplu-uyari-ver', async (event, memberIds, reason) => {
+    try {
+        return { ok: true, data: await giveBulkWarning(memberIds, reason) };
+    } catch (error) {
+        console.log(`[Yoklama] Toplu uyarı hatası: ${error.message}`);
+        return { ok: false, error: error.message };
+    }
+});
 
 ipcMain.handle('yoklama-tara', async () => {
     try {
