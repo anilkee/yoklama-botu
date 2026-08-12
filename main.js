@@ -289,7 +289,7 @@ function showSetupWindow() {
     setupWindow = new BrowserWindow({
         width: 420,
         height: 320,
-        title: 'PvP Yoklama Botu - İlk Kurulum',
+        title: 'MD PvP Yoklama Botu - İlk Kurulum',
         autoHideMenuBar: true,
         resizable: false,
         webPreferences: {
@@ -326,11 +326,11 @@ ipcMain.on('save-setup', (event, values) => {
 });
 
 function startApp() {
-    console.log('[Sistem] PvP Yoklama Botu başlatılıyor...');
+    console.log('[Sistem] MD PvP Yoklama Botu başlatılıyor...');
     mainWindow = new BrowserWindow({
         width: 960,
         height: 720,
-        title: 'PvP Yoklama Botu',
+        title: 'MD PvP Yoklama Botu',
         autoHideMenuBar: true,
         resizable: true,
         webPreferences: {
@@ -889,7 +889,7 @@ function showUpdateProgressWindow() {
     updateProgressWindow = new BrowserWindow({
         width: 380,
         height: 150,
-        title: 'PvP Yoklama Botu - Güncelleniyor',
+        title: 'MD PvP Yoklama Botu - Güncelleniyor',
         autoHideMenuBar: true,
         resizable: false,
         webPreferences: {
@@ -1038,7 +1038,7 @@ app.on('ready', async () => {
             await dialog.showMessageBox({
                 type: 'warning',
                 title: 'Geçici Klasörden Çalışıyor',
-                message: 'PvP Yoklama Botu şu an geçici bir klasörden çalışıyor gibi görünüyor (muhtemelen ZIP dosyasının içinden, hiç çıkarmadan açıldı).\n\nBu durumda girdiğin ayarlar (Discord token) her açılışta sıfırlanır - çünkü Windows bu klasörü her seferinde yeniden, geçici olarak oluşturuyor.\n\nÇözüm: klasörü ZIP dosyasının içinden Masaüstü gibi kalıcı bir klasöre çıkar (klasöre sağ tık → "Tümünü Çıkart") ve programı oradan çalıştır.',
+                message: 'MD PvP Yoklama Botu şu an geçici bir klasörden çalışıyor gibi görünüyor (muhtemelen ZIP dosyasının içinden, hiç çıkarmadan açıldı).\n\nBu durumda girdiğin ayarlar (Discord token) her açılışta sıfırlanır - çünkü Windows bu klasörü her seferinde yeniden, geçici olarak oluşturuyor.\n\nÇözüm: klasörü ZIP dosyasının içinden Masaüstü gibi kalıcı bir klasöre çıkar (klasöre sağ tık → "Tümünü Çıkart") ve programı oradan çalıştır.',
                 buttons: ['Anladım']
             });
         }
