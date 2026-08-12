@@ -46,7 +46,18 @@ function writeDebugLog(line) {
 const originalConsoleLog = console.log;
 console.log = (...args) => {
     originalConsoleLog(...args);
-    writeDebugLog(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    const line = args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    writeDebugLog(line);
+    // Panelde canlı log gösterebilmek için her satırı ekrana da yolluyoruz.
+    // mainWindow henüz yoksa (kurulum ekranı, güncelleme aşaması vb.) sorun
+    // değil - sadece debug.log'a yazılmış olur.
+    try {
+        if (typeof mainWindow !== 'undefined' && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('log-entry', { time: Date.now(), message: line });
+        }
+    } catch (error) {
+        // pencere henüz hazır değilse sessizce geç
+    }
 };
 
 // Discord kütüphanesi içinde (örn. gateway paket işleyicilerinde) sessizce
@@ -70,7 +81,7 @@ if (!gotSingleInstanceLock) {
     process.exit(0);
 }
 
-app.setAppUserModelId('com.yoklamabotu.app');
+app.setAppUserModelId('com.pvpyoklamabotu.app');
 
 app.on('second-instance', () => {
     const existingWindow = mainWindow || setupWindow || updateProgressWindow;
@@ -278,7 +289,7 @@ function showSetupWindow() {
     setupWindow = new BrowserWindow({
         width: 420,
         height: 320,
-        title: 'Yoklama Botu - İlk Kurulum',
+        title: 'PvP Yoklama Botu - İlk Kurulum',
         autoHideMenuBar: true,
         resizable: false,
         webPreferences: {
@@ -315,11 +326,11 @@ ipcMain.on('save-setup', (event, values) => {
 });
 
 function startApp() {
-    console.log('[Sistem] Yoklama Botu başlatılıyor...');
+    console.log('[Sistem] PvP Yoklama Botu başlatılıyor...');
     mainWindow = new BrowserWindow({
-        width: 900,
-        height: 680,
-        title: 'Yoklama Botu',
+        width: 960,
+        height: 720,
+        title: 'PvP Yoklama Botu',
         autoHideMenuBar: true,
         resizable: true,
         webPreferences: {
@@ -458,12 +469,13 @@ async function runYoklamaScan() {
         ATTENDANCE_ROLE_IDS.some((roleId) => member.roles.cache.has(roleId))
     ));
 
-    const absentees = [...attendanceMembers.values()].filter((member) => !inVoiceIds.has(member.id));
-
+    // Mazaret sadece sesde OLMAYANLAR için anlamlı olduğundan, kanalı yine de
+    // tarıyoruz ama sesde olanlara eşleştirmiyoruz.
     const excuseByAuthor = await fetchRecentExcuses();
 
-    const results = absentees.map((member) => {
-        const excuse = excuseByAuthor.get(member.id) || null;
+    const results = [...attendanceMembers.values()].map((member) => {
+        const inVoice = inVoiceIds.has(member.id);
+        const excuse = !inVoice ? (excuseByAuthor.get(member.id) || null) : null;
         const nextRole = getNextWarningRole(member);
         const currentTierIndex = getWarningTierIndex(member);
         return {
@@ -471,6 +483,7 @@ async function runYoklamaScan() {
             displayName: member.displayName,
             tag: member.user.tag,
             avatarURL: member.displayAvatarURL({ size: 64 }),
+            inVoice,
             excuseText: excuse ? excuse.content : null,
             excuseReactions: excuse ? excuse.reactions : [],
             excuseAt: excuse ? excuse.createdTimestamp : null,
@@ -480,15 +493,20 @@ async function runYoklamaScan() {
         };
     });
 
-    results.sort((a, b) => a.displayName.localeCompare(b.displayName, 'tr'));
+    // Sesde olmayanlar (dikkat gerektirenler) üstte, sesde olanlar altta.
+    results.sort((a, b) => {
+        if (a.inVoice !== b.inVoice) return a.inVoice ? 1 : -1;
+        return a.displayName.localeCompare(b.displayName, 'tr');
+    });
 
-    console.log(`[Yoklama] Tarama tamamlandı: ${attendanceMembers.size} kişi kontrol edildi, ${results.length} kişi sesde değil.`);
+    const totalInVoice = results.filter((m) => m.inVoice).length;
+    console.log(`[Yoklama] Tarama tamamlandı: ${results.length} yetkili kontrol edildi, ${totalInVoice} sesde, ${results.length - totalInVoice} sesde değil.`);
 
     return {
         scannedAt: Date.now(),
-        totalChecked: attendanceMembers.size,
-        totalInVoice: attendanceMembers.size - absentees.length,
-        absentees: results,
+        totalChecked: results.length,
+        totalInVoice,
+        members: results,
     };
 }
 
@@ -590,7 +608,6 @@ function buildSingleWarningAnnounceMessage(memberId, givenRoleId, reason) {
         `# Uyarı sebebi : ${reason}`,
         `# Uyarı :  <@&${givenRoleId}>`,
         `# Uyarı bitiş tarihi : ${formatWarningEndDate()}`,
-        `# Hatalı Oldugunu Düşünen Var İse   <@${selfId}>     DM Den Ulaşabilir`,
     ].join('\n');
 }
 
@@ -604,7 +621,6 @@ function buildWarningAnnounceMessage(warnedMemberIds, reason) {
         `# Uyarı sebebi : ${reason}`,
         `# Uyarı : ${ladderMentions}`,
         `# Uyarı bitiş tarihi : ${formatWarningEndDate()}`,
-        `# Hatalı Oldugunu Düşünen Var İse   <@${selfId}>     DM Den Ulaşabilir`,
     ].join('\n');
 }
 
@@ -873,7 +889,7 @@ function showUpdateProgressWindow() {
     updateProgressWindow = new BrowserWindow({
         width: 380,
         height: 150,
-        title: 'Yoklama Botu - Güncelleniyor',
+        title: 'PvP Yoklama Botu - Güncelleniyor',
         autoHideMenuBar: true,
         resizable: false,
         webPreferences: {
@@ -948,26 +964,47 @@ async function checkForUpdates() {
 
         // Bu süreç tamamen kapanana kadar bekleyip (exe dosya kilidi bırakılsın
         // diye), yeni dosyaların üzerine kopyalayıp uygulamayı yeniden açan
-        // ve kendini silen küçük bir betik.
+        // ve kendini silen küçük bir betik. WAITCOUNT ile bekleme süresine üst
+        // sınır koyuyoruz - süreç bir türlü kapanmazsa sonsuza kadar takılı
+        // kalmak yerine 90 saniye sonra yine de kopyalamaya geçiyor.
         const batPath = path.join(stagingDir, 'apply-update.bat');
+        const vbsPath = path.join(stagingDir, 'apply-update.vbs');
         const batContent = [
             '@echo off',
+            'setlocal enabledelayedexpansion',
+            'set /a WAITCOUNT=0',
             ':wait',
             `tasklist /FI "PID eq ${pid}" 2>NUL | find /I "${pid}" >NUL`,
             'if not errorlevel 1 (',
+            '  set /a WAITCOUNT+=1',
+            '  if !WAITCOUNT! GEQ 90 goto copy',
             '  timeout /t 1 /nobreak >NUL',
             '  goto wait',
             ')',
-            `xcopy /E /Y /I "${extractDir}\\*" "${installRoot}\\" >NUL`,
+            ':copy',
+            `xcopy /E /Y /I /Q "${extractDir}\\*" "${installRoot}\\" >NUL`,
             `start "" "${path.join(installRoot, exeName)}"`,
+            `del "${vbsPath}"`,
             'del "%~f0"',
         ].join('\r\n');
         fs.writeFileSync(batPath, batContent);
 
+        // cmd.exe'yi doğrudan spawn etmek Windows'ta windowsHide:true'ya rağmen
+        // bazen kısa süreliğine boş/metin akan bir konsol penceresi
+        // bırakabiliyordu (bildirilen "cmd penceresi geliyor" sorunu). Bunun
+        // yerine .bat'ı WScript.Shell üzerinden tamamen gizli (0 = pencere yok)
+        // çalıştıran bir .vbs betiği kullanıyoruz - Windows'ta bir komutu
+        // görünmez şekilde başlatmanın en güvenilir yolu bu.
+        const vbsContent = [
+            'Set objShell = CreateObject("WScript.Shell")',
+            `objShell.Run """${batPath}""", 0, False`,
+        ].join('\r\n');
+        fs.writeFileSync(vbsPath, vbsContent);
+
         console.log(`[Güncelleme] v${latestVersion} kuruluyor, uygulama yeniden başlatılacak...`);
         setUpdateProgressText('Kuruluyor, birazdan yeniden açılacak...');
 
-        spawn('cmd.exe', ['/c', batPath], {
+        spawn('wscript.exe', [vbsPath], {
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
@@ -1001,7 +1038,7 @@ app.on('ready', async () => {
             await dialog.showMessageBox({
                 type: 'warning',
                 title: 'Geçici Klasörden Çalışıyor',
-                message: 'Yoklama Botu şu an geçici bir klasörden çalışıyor gibi görünüyor (muhtemelen ZIP dosyasının içinden, hiç çıkarmadan açıldı).\n\nBu durumda girdiğin ayarlar (Discord token) her açılışta sıfırlanır - çünkü Windows bu klasörü her seferinde yeniden, geçici olarak oluşturuyor.\n\nÇözüm: klasörü ZIP dosyasının içinden Masaüstü gibi kalıcı bir klasöre çıkar (klasöre sağ tık → "Tümünü Çıkart") ve programı oradan çalıştır.',
+                message: 'PvP Yoklama Botu şu an geçici bir klasörden çalışıyor gibi görünüyor (muhtemelen ZIP dosyasının içinden, hiç çıkarmadan açıldı).\n\nBu durumda girdiğin ayarlar (Discord token) her açılışta sıfırlanır - çünkü Windows bu klasörü her seferinde yeniden, geçici olarak oluşturuyor.\n\nÇözüm: klasörü ZIP dosyasının içinden Masaüstü gibi kalıcı bir klasöre çıkar (klasöre sağ tık → "Tümünü Çıkart") ve programı oradan çalıştır.',
                 buttons: ['Anladım']
             });
         }

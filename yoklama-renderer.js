@@ -6,11 +6,6 @@ document.getElementById('versionText').textContent = `v${require('./package.json
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 
-// Discord bağlantısı kurulmadan taramaya kalkışmanın anlamı yok (hemen hata
-// verir) - o yüzden panel açılır açılmaz değil, bağlantı "bağlı" olduğunda
-// ve bir kere olacak şekilde ilk taramayı otomatik başlatıyoruz.
-let hasAutoScanned = false;
-
 function applyStatus(status) {
     // Eski format (düz string) ile yeni format ({state, detail}) ikisini de kabul et.
     const state = (status && typeof status === 'object') ? status.state : status;
@@ -20,10 +15,6 @@ function applyStatus(status) {
     if (state === 'bağlı') {
         statusDot.classList.add('ok');
         statusText.textContent = detail || 'Bağlı';
-        if (!hasAutoScanned) {
-            hasAutoScanned = true;
-            runScan();
-        }
     } else if (state === 'hata') {
         statusDot.classList.add('danger');
         statusText.textContent = detail || 'Bağlantı hatası';
@@ -35,6 +26,37 @@ function applyStatus(status) {
 
 ipcRenderer.on('status', (event, status) => applyStatus(status));
 ipcRenderer.send('request-status');
+
+// --- İŞLEM KAYDI (LOG) ---
+const logListEl = document.getElementById('logList');
+const clearLogBtn = document.getElementById('clearLogBtn');
+const MAX_LOG_LINES = 300;
+
+function logCategoryOf(message) {
+    const match = /^\[([^\]]+)\]/.exec(message);
+    if (!match) return '';
+    return match[1].toLowerCase();
+}
+
+function appendLog(time, message) {
+    const line = document.createElement('div');
+    const category = logCategoryOf(message);
+    line.className = `log-line log-${category}`;
+    const t = new Date(time).toLocaleTimeString('tr-TR');
+    line.innerHTML = `<span class="log-time">${t}</span>${escapeHtml(message)}`;
+    logListEl.appendChild(line);
+
+    while (logListEl.children.length > MAX_LOG_LINES) {
+        logListEl.removeChild(logListEl.firstChild);
+    }
+    logListEl.scrollTop = logListEl.scrollHeight;
+}
+
+ipcRenderer.on('log-entry', (event, entry) => appendLog(entry.time, entry.message));
+
+clearLogBtn.addEventListener('click', () => {
+    logListEl.innerHTML = '';
+});
 
 const scanBtn = document.getElementById('scanBtn');
 const scanStatus = document.getElementById('scanStatus');
@@ -137,16 +159,26 @@ function updateSelectedCount() {
 
 function renderRow(member) {
     const row = document.createElement('div');
-    row.className = 'row';
+    row.className = `row ${member.inVoice ? 'status-in' : 'status-out'}`;
     row.dataset.id = member.id;
     if (selectedIds.has(member.id)) row.classList.add('selected');
 
+    const voiceClass = member.inVoice ? 'in' : 'out';
+    const voiceLabel = member.inVoice ? 'Sesde ✅' : 'Sesde Değil ❌';
+    const excuseHtml = member.inVoice
+        ? ''
+        : `
+            <div class="excuse">${member.excuseText ? escapeHtml(member.excuseText) : '<span class="muted">Mazaret yok</span>'}</div>
+            <div class="reactions">${renderReactions(member.excuseReactions)}</div>
+        `;
+
     row.innerHTML = `
+        <span class="voiceDot ${voiceClass}"></span>
         <img class="avatar" src="${member.avatarURL}" alt="">
         <div class="info">
             <div class="name">${escapeHtml(member.displayName)} <span class="tag">${escapeHtml(member.tag)}</span></div>
-            <div class="excuse">${member.excuseText ? escapeHtml(member.excuseText) : '<span class="muted">Mazaret yok</span>'}</div>
-            <div class="reactions">${renderReactions(member.excuseReactions)}</div>
+            <div class="voiceLabel ${voiceClass}">${voiceLabel}</div>
+            ${excuseHtml}
             <div class="tier muted">Mevcut kademe: ${member.currentTierLabel || 'Yok'}</div>
         </div>
         <div class="action">
@@ -162,17 +194,17 @@ function renderRow(member) {
 }
 
 function renderResults(data) {
-    lastResults = data.absentees;
+    lastResults = data.members;
     listEl.innerHTML = '';
-    summaryText.textContent = `Kontrol edilen: ${data.totalChecked} · Sesde: ${data.totalInVoice} · Sesde değil: ${data.absentees.length}`;
+    summaryText.innerHTML = `Kontrol edilen: <b>${data.totalChecked}</b> · Sesde: <span class="green-num">${data.totalInVoice}</span> · Sesde değil: <span class="red-num">${data.totalChecked - data.totalInVoice}</span>`;
 
-    if (data.absentees.length === 0) {
+    if (data.members.length === 0) {
         emptyState.style.display = 'block';
         return;
     }
     emptyState.style.display = 'none';
 
-    data.absentees.forEach((member) => {
+    data.members.forEach((member) => {
         listEl.appendChild(renderRow(member));
     });
 
@@ -404,4 +436,4 @@ ipcRenderer.invoke('yoklama-zamanlama-durumu').then((state) => {
     if (state && state.scheduledAt) startCountdown(state.scheduledAt);
 });
 
-// İlk otomatik tarama, bağlantı "bağlı" olduğunda applyStatus() içinden tetiklenir.
+// Not: Açılışta otomatik tarama YOK - "Taramayı Başlat" butonuna basmak gerekiyor.

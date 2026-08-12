@@ -2,15 +2,15 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Yoklama Botu - Güncelleniyor</title>
+    <title>PvP Yoklama Botu - Güncelleniyor</title>
     <style>
         * { box-sizing: border-box; }
         html, body { height: 100%; }
         body {
             margin: 0;
             font-family: "Segoe UI", system-ui, sans-serif;
-            background: #090b0a;
-            color: #d9f3ea;
+            background: #0a0707;
+            color: #f5eaea;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -20,18 +20,18 @@
             padding: 0 20px;
         }
         .spinner {
-            width: 28px; height: 28px; border: 3px solid #263029;
-            border-top-color: #49e6ba; border-radius: 50%;
+            width: 28px; height: 28px; border: 3px solid #3a1818;
+            border-top-color: #ff2d3d; border-radius: 50%;
             animation: spin 0.8s linear infinite; margin-bottom: 14px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        h1 { font-size: 13px; margin: 0 0 8px; font-weight: 600; color: #d9f3ea; }
-        #text { font-size: 11.5px; color: #7fa199; }
+        h1 { font-size: 13px; margin: 0 0 8px; font-weight: 700; color: #f5eaea; }
+        #text { font-size: 11.5px; color: #9c7373; }
     </style>
 </head>
 <body>
     <div class="spinner"></div>
-    <h1>Yoklama Botu güncelleniyor</h1>
+    <h1>PvP Yoklama Botu güncelleniyor</h1>
     <div id="text">Hazırlanıyor...</div>
     <script>
         const { ipcRenderer } = require('electron');

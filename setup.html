@@ -2,7 +2,7 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>Yoklama Botu - İlk Kurulum</title>
+    <title>PvP Yoklama Botu - İlk Kurulum</title>
     <style>
         * { box-sizing: border-box; }
         html, body { height: 100%; }
@@ -10,34 +10,35 @@
             margin: 0;
             padding: 20px;
             font-family: "Segoe UI", system-ui, sans-serif;
-            background: #090b0a;
-            color: #d9f3ea;
+            background: #0a0707;
+            color: #f5eaea;
         }
-        h1 { font-size: 15px; margin: 0 0 4px; color: #d9f3ea; font-weight: 600; }
-        p.desc { font-size: 11.5px; color: #7fa199; margin: 0 0 16px; line-height: 1.5; }
+        h1 { font-size: 15px; margin: 0 0 4px; color: #f5eaea; font-weight: 700; }
+        p.desc { font-size: 11.5px; color: #9c7373; margin: 0 0 16px; line-height: 1.5; }
         .field { margin-bottom: 14px; }
-        .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #d9f3ea; }
-        .field .hint { display: block; font-size: 11px; color: #7fa199; margin-bottom: 6px; }
+        .field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: #f5eaea; }
+        .field .hint { display: block; font-size: 11px; color: #9c7373; margin-bottom: 6px; }
         .field input {
             width: 100%; padding: 9px 10px; border-radius: 6px;
-            background: #161c19; color: #d9f3ea; border: 1px solid #263029; font-size: 12px;
+            background: #1c1212; color: #f5eaea; border: 1px solid #3a1818; font-size: 12px;
+            box-sizing: border-box;
         }
         button.primary {
-            width: 100%; background: #49e6ba; color: #090b0a; font-weight: 700;
+            width: 100%; background: #ff2d3d; color: #0a0707; font-weight: 700;
             border: none; padding: 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
             font-family: "Segoe UI", sans-serif; transition: opacity .15s; margin-top: 6px;
         }
-        button.primary:hover { opacity: .88; }
-        button.primary:disabled { opacity: .6; cursor: default; }
+        button.primary:hover { opacity: .85; }
+        button.primary:disabled { opacity: .5; cursor: default; }
         #errorBox {
-            display: none; background: rgba(255,98,89,0.12); color: #ff6259;
-            border: 1px solid rgba(255,98,89,0.35);
+            display: none; background: rgba(255,45,61,0.12); color: #ff6b6b;
+            border: 1px solid rgba(255,45,61,0.4);
             padding: 10px 12px; border-radius: 6px; font-size: 12px; margin-bottom: 14px;
         }
     </style>
 </head>
 <body>
-    <h1>Yoklama Botu - İlk Kurulum</h1>
+    <h1>PvP Yoklama Botu - İlk Kurulum</h1>
     <p class="desc">Bu paneli çalıştıracak Discord hesabının token'ını gir, gerisi hazır.</p>
 
     <div id="errorBox"></div>
