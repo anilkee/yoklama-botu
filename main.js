@@ -519,7 +519,7 @@ function waitForRoleBotReply(timeoutMs = 6000) {
     });
 }
 
-async function giveNextWarningRole(memberId) {
+async function giveNextWarningRole(memberId, reason) {
     const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
     if (!guild) throw new Error('Sunucu bulunamadı, GUILD_ID hatalı olabilir.');
     if (!guild.shard) {
@@ -551,7 +551,24 @@ async function giveNextWarningRole(memberId) {
     const botReply = await replyPromise;
 
     console.log(`[Yoklama] ${member.user.tag} (${memberId}) için "/rol-ver" gönderildi: ${nextRole.label} (${nextRole.id}). Bot cevabı: ${botReply || '(yakalanamadı)'}`);
-    return { ok: true, givenLabel: nextRole.label, botReply };
+
+    // Tekli akıştan (bulk değil) çağrıldıysa - yani bir sebep verildiyse - hemen
+    // burada duyuru mesajını da gönder. Toplu akış kendi toplu duyurusunu ayrı
+    // gönderdiği için bu fonksiyonu reason olmadan çağırıyor, burada tekrar
+    // duyuru göndermiyoruz (aksi halde toplu uyarıda kişi başı ayrı mesaj çıkardı).
+    let announceError = null;
+    if (reason) {
+        try {
+            const channel = await client.channels.fetch(WARNING_ANNOUNCE_CHANNEL_ID);
+            if (!channel) throw new Error('Uyarı kanalı bulunamadı, WARNING_ANNOUNCE_CHANNEL_ID hatalı olabilir.');
+            await channel.send(buildSingleWarningAnnounceMessage(memberId, nextRole.id, reason));
+        } catch (error) {
+            announceError = error.message;
+            console.log(`[Yoklama] Tekli uyarı duyuru mesajı gönderilemedi: ${error.message}`);
+        }
+    }
+
+    return { ok: true, givenLabel: nextRole.label, botReply, announceError };
 }
 
 function formatWarningEndDate() {
@@ -560,6 +577,21 @@ function formatWarningEndDate() {
     const month = String(end.getMonth() + 1).padStart(2, '0');
     const year = end.getFullYear();
     return `${day}.${month}.${year}`;
+}
+
+// Tekli uyarıda toplu uyarıdan farklı olarak "# Uyarı :" satırında tüm
+// merdiven değil, o kişiye o an verilen tek rol gösterilir (hangisi verildiği
+// zaten kesin biliniyor).
+function buildSingleWarningAnnounceMessage(memberId, givenRoleId, reason) {
+    const selfId = client.user.id;
+    return [
+        `# Uyarı alan :  <@${memberId}>`,
+        `# Uyarı veren : <@${selfId}>`,
+        `# Uyarı sebebi : ${reason}`,
+        `# Uyarı :  <@&${givenRoleId}>`,
+        `# Uyarı bitiş tarihi : ${formatWarningEndDate()}`,
+        `# Hatalı Oldugunu Düşünen Var İse   <@${selfId}>     DM Den Ulaşabilir`,
+    ].join('\n');
 }
 
 function buildWarningAnnounceMessage(warnedMemberIds, reason) {
@@ -661,9 +693,9 @@ ipcMain.handle('yoklama-tara', async () => {
     }
 });
 
-ipcMain.handle('yoklama-rol-ver', async (event, memberId) => {
+ipcMain.handle('yoklama-rol-ver', async (event, memberId, reason) => {
     try {
-        return await giveNextWarningRole(memberId);
+        return await giveNextWarningRole(memberId, reason);
     } catch (error) {
         console.log(`[Yoklama] Rol verme hatası (${memberId}): ${error.message}`);
         return { ok: false, error: error.message };

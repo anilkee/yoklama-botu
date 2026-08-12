@@ -60,6 +60,43 @@ const selectedIds = new Set();
 
 const WARNING_LADDER = ['Sözlü Uyarı', '1x', '2x', '3x'];
 
+// --- SEBEP SORMA MODAL'I (tekli uyarı) ---
+const reasonModalOverlay = document.getElementById('reasonModalOverlay');
+const reasonModalSub = document.getElementById('reasonModalSub');
+const reasonModalInput = document.getElementById('reasonModalInput');
+const reasonModalCancel = document.getElementById('reasonModalCancel');
+const reasonModalConfirm = document.getElementById('reasonModalConfirm');
+
+let pendingReasonResolve = null;
+
+function askForReason(subText) {
+    return new Promise((resolve) => {
+        pendingReasonResolve = resolve;
+        reasonModalSub.textContent = subText;
+        reasonModalInput.value = '';
+        reasonModalOverlay.style.display = 'flex';
+        reasonModalInput.focus();
+    });
+}
+
+function closeReasonModal(result) {
+    reasonModalOverlay.style.display = 'none';
+    if (pendingReasonResolve) {
+        pendingReasonResolve(result);
+        pendingReasonResolve = null;
+    }
+}
+
+reasonModalCancel.addEventListener('click', () => closeReasonModal(null));
+reasonModalConfirm.addEventListener('click', () => {
+    const reason = reasonModalInput.value.trim();
+    if (!reason) {
+        reasonModalInput.focus();
+        return;
+    }
+    closeReasonModal(reason);
+});
+
 function formatDate(ts) {
     if (!ts) return '';
     return new Date(ts).toLocaleString('tr-TR');
@@ -175,12 +212,19 @@ async function onRoleButtonClick(evt) {
     const btn = evt.currentTarget;
     const memberId = btn.dataset.id;
     const msgEl = document.querySelector(`.roleMsg[data-id="${memberId}"]`);
+    const member = lastResults.find((m) => m.id === memberId);
+
+    let reason = null;
+    if (member && !member.isMaxTier) {
+        reason = await askForReason(`${member.displayName} kişisine "${member.nextTierLabel}" verilecek. Sebebini yaz - kanala duyuru olarak düşecek:`);
+        if (reason === null) return; // iptal edildi
+    }
 
     btn.disabled = true;
     msgEl.textContent = 'Gönderiliyor...';
     msgEl.className = 'roleMsg';
 
-    const result = await ipcRenderer.invoke('yoklama-rol-ver', memberId);
+    const result = await ipcRenderer.invoke('yoklama-rol-ver', memberId, reason);
     btn.disabled = false;
 
     if (!result.ok) {
@@ -193,9 +237,11 @@ async function onRoleButtonClick(evt) {
         return;
     }
 
-    msgEl.textContent = result.botReply
+    let text = result.botReply
         ? `Gönderildi: ${result.givenLabel} — Bot: "${result.botReply}"`
         : `Gönderildi: ${result.givenLabel} (bot cevabı yakalanamadı, Discord'dan kontrol et)`;
+    if (result.announceError) text += ` (duyuru gönderilemedi: ${result.announceError})`;
+    msgEl.textContent = text;
     msgEl.className = 'roleMsg ok';
 
     applyGivenRoleToRow(memberId, result.givenLabel);
