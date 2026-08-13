@@ -3,3 +3,8 @@ build/
 config.env
 debug.log
 debug.log.old
+custom-icon.txt
+custom-icon.png
+custom-icon.jpg
+custom-icon.jpeg
+custom-icon.ico

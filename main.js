@@ -426,11 +426,30 @@ function isConfigComplete() {
     return missing.length === 0;
 }
 
+// --- ÖZEL LOGO (UYGULAMA SİMGESİ) ---
+// Kullanıcı panelden bir logo seçtiğinde dosya __dirname içine kopyalanıp
+// adı bu küçük işaretçi dosyasına yazılıyor - bir sonraki açılışta (ve
+// seçildiği anda açık olan tüm pencerelerde) uygulanıyor.
+const CUSTOM_ICON_MARKER_PATH = path.join(__dirname, 'custom-icon.txt');
+
+function getCustomIconPath() {
+    try {
+        const filename = fs.readFileSync(CUSTOM_ICON_MARKER_PATH, 'utf8').trim();
+        if (!filename) return null;
+        const fullPath = path.join(__dirname, filename);
+        if (fs.existsSync(fullPath)) return fullPath;
+    } catch (error) {
+        // özel logo hiç ayarlanmamış, sorun değil
+    }
+    return null;
+}
+
 function showSetupWindow() {
     setupWindow = new BrowserWindow({
         width: 420,
         height: 320,
         title: 'MD PvP Yoklama Botu - İlk Kurulum',
+        icon: getCustomIconPath() || undefined,
         autoHideMenuBar: true,
         resizable: false,
         webPreferences: {
@@ -472,6 +491,7 @@ function startApp() {
         width: 960,
         height: 720,
         title: 'MD PvP Yoklama Botu',
+        icon: getCustomIconPath() || undefined,
         autoHideMenuBar: true,
         resizable: true,
         webPreferences: {
@@ -971,6 +991,64 @@ ipcMain.handle('yoklama-zamanlama-durumu', () => ({ scheduledAt: scheduledScanAt
 
 ipcMain.on('request-status', () => broadcastStatus());
 
+// Arayüzde (renderer) yakalanan bir hata olursa buraya düşer - debug.log'a
+// ve İşlem Kaydı paneline yazılır, böylece "buton bir şey yapmıyor" gibi
+// sessiz arayüz hataları da görünür hale gelir.
+ipcMain.on('renderer-hata', (event, message) => {
+    console.log(`[ArayüzHatası] ${message}`);
+});
+
+// --- LOGO SEÇME ---
+ipcMain.handle('logo-durumu', () => ({ iconPath: getCustomIconPath() }));
+
+ipcMain.handle('logo-sec', async () => {
+    if (!mainWindow) return { ok: false, error: 'Pencere hazır değil.' };
+
+    const pickResult = await dialog.showOpenDialog(mainWindow, {
+        title: 'Logo Seç',
+        filters: [{ name: 'Resimler', extensions: ['png', 'jpg', 'jpeg', 'ico'] }],
+        properties: ['openFile'],
+    });
+    if (pickResult.canceled || !pickResult.filePaths[0]) {
+        return { ok: false, canceled: true };
+    }
+
+    const sourcePath = pickResult.filePaths[0];
+    const ext = path.extname(sourcePath).toLowerCase() || '.png';
+    const destFilename = `custom-icon${ext}`;
+    const destPath = path.join(__dirname, destFilename);
+
+    try {
+        fs.copyFileSync(sourcePath, destPath);
+        fs.writeFileSync(CUSTOM_ICON_MARKER_PATH, destFilename);
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+
+    [mainWindow, setupWindow, updateProgressWindow].forEach((win) => {
+        if (win && !win.isDestroyed()) {
+            try {
+                win.setIcon(destPath);
+            } catch (error) {
+                console.log(`[Logo] Pencereye uygulanamadı: ${error.message}`);
+            }
+        }
+    });
+
+    console.log(`[Logo] Yeni logo ayarlandı: ${destFilename}`);
+    return { ok: true, iconPath: destPath };
+});
+
+ipcMain.handle('logo-sifirla', () => {
+    try {
+        fs.rmSync(CUSTOM_ICON_MARKER_PATH, { force: true });
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+    console.log('[Logo] Varsayılana döndürüldü (değişikliğin tam yansıması için uygulamayı yeniden başlat).');
+    return { ok: true };
+});
+
 // --- OTOMATİK GÜNCELLEME ---
 // Uygulama her açıldığında GitHub'daki en son release ile kendi versiyonunu
 // karşılaştırır; yeni bir sürüm varsa indirir, kurar ve uygulamayı yeniden başlatır.
@@ -1104,6 +1182,7 @@ function showUpdateProgressWindow() {
         width: 380,
         height: 150,
         title: 'MD PvP Yoklama Botu - Güncelleniyor',
+        icon: getCustomIconPath() || undefined,
         autoHideMenuBar: true,
         resizable: false,
         webPreferences: {

@@ -1,5 +1,25 @@
 const { ipcRenderer } = require('electron');
 
+// Arayüzde bir yerde sessizce fırlatılan bir hata olursa (örn. bir buton
+// tıklamasının hiçbir şey yapmıyormuş gibi görünmesine sebep olan bir
+// istisna), daha önce bunu görme şansımız yoktu. Artık ana sürece iletip
+// debug.log'a ve İşlem Kaydı'na düşürüyoruz.
+window.addEventListener('error', (event) => {
+    try {
+        ipcRenderer.send('renderer-hata', `${event.message} (${event.filename}:${event.lineno}:${event.colno})`);
+    } catch (error) {
+        // yoksay
+    }
+});
+window.addEventListener('unhandledrejection', (event) => {
+    try {
+        const reason = event.reason && event.reason.stack ? event.reason.stack : event.reason;
+        ipcRenderer.send('renderer-hata', `Yakalanmamış promise reddi: ${reason}`);
+    } catch (error) {
+        // yoksay
+    }
+});
+
 document.getElementById('versionText').textContent = `v${require('./package.json').version}`;
 
 // --- DURUM ---
@@ -108,6 +128,14 @@ const reasonModalConfirm = document.getElementById('reasonModalConfirm');
 let pendingReasonResolve = null;
 
 function askForReason(subText) {
+    // Önceki bir modal hâlâ açık kaldıysa (örn. arka arkaya hızlı tıklanmışsa)
+    // onu iptal edilmiş sayıp bekleyen promise'i orada bırakmıyoruz - aksi
+    // halde o önceki tıklama sonsuza kadar "Gönderiliyor..." da takılı kalırdı.
+    if (pendingReasonResolve) {
+        const previousResolve = pendingReasonResolve;
+        pendingReasonResolve = null;
+        previousResolve(null);
+    }
     return new Promise((resolve) => {
         pendingReasonResolve = resolve;
         reasonModalSub.textContent = subText;
@@ -262,37 +290,50 @@ async function onRoleButtonClick(evt) {
     const msgEl = document.querySelector(`.roleMsg[data-id="${memberId}"]`);
     const member = lastResults.find((m) => m.id === memberId);
 
-    let reason = null;
-    if (member && !member.isMaxTier) {
-        reason = await askForReason(`${member.displayName} kişisine "${member.nextTierLabel}" verilecek. Sebebini yaz - kanala duyuru olarak düşecek:`);
-        if (reason === null) return; // iptal edildi
-    }
-
-    btn.disabled = true;
-    msgEl.textContent = 'Gönderiliyor...';
-    msgEl.className = 'roleMsg';
-
-    const result = await ipcRenderer.invoke('yoklama-rol-ver', memberId, reason);
-    btn.disabled = false;
-
-    if (!result.ok) {
-        if (result.reason === 'max') {
-            msgEl.textContent = `Zaten en üst kademede (${result.currentTierLabel}).`;
-        } else {
-            msgEl.textContent = `Hata: ${result.error || 'bilinmeyen hata'}`;
+    try {
+        let reason = null;
+        if (member && !member.isMaxTier) {
+            reason = await askForReason(`${member.displayName} kişisine "${member.nextTierLabel}" verilecek. Sebebini yaz - kanala duyuru olarak düşecek:`);
+            if (reason === null) return; // iptal edildi
         }
-        msgEl.className = 'roleMsg error';
-        return;
+
+        btn.disabled = true;
+        if (msgEl) {
+            msgEl.textContent = 'Gönderiliyor...';
+            msgEl.className = 'roleMsg';
+        }
+
+        const result = await ipcRenderer.invoke('yoklama-rol-ver', memberId, reason);
+
+        if (!msgEl) return;
+
+        if (!result.ok) {
+            if (result.reason === 'max') {
+                msgEl.textContent = `Zaten en üst kademede (${result.currentTierLabel}).`;
+            } else {
+                msgEl.textContent = `Hata: ${result.error || 'bilinmeyen hata'}`;
+            }
+            msgEl.className = 'roleMsg error';
+            return;
+        }
+
+        let text = result.botReply
+            ? `Gönderildi: ${result.givenLabel} — Bot: "${result.botReply}"`
+            : `Gönderildi: ${result.givenLabel} (bot cevabı yakalanamadı, Discord'dan kontrol et)`;
+        if (result.announceError) text += ` (duyuru gönderilemedi: ${result.announceError})`;
+        msgEl.textContent = text;
+        msgEl.className = 'roleMsg ok';
+
+        applyGivenRoleToRow(memberId, result.givenLabel);
+    } catch (error) {
+        showError(`Rol verme sırasında beklenmeyen hata: ${error.message}`);
+        if (msgEl) {
+            msgEl.textContent = `Hata: ${error.message}`;
+            msgEl.className = 'roleMsg error';
+        }
+    } finally {
+        btn.disabled = false;
     }
-
-    let text = result.botReply
-        ? `Gönderildi: ${result.givenLabel} — Bot: "${result.botReply}"`
-        : `Gönderildi: ${result.givenLabel} (bot cevabı yakalanamadı, Discord'dan kontrol et)`;
-    if (result.announceError) text += ` (duyuru gönderilemedi: ${result.announceError})`;
-    msgEl.textContent = text;
-    msgEl.className = 'roleMsg ok';
-
-    applyGivenRoleToRow(memberId, result.givenLabel);
 }
 
 // Bir kişiye rol verildikten sonra (tekli ya da toplu akıştan), o satırın
@@ -410,41 +451,44 @@ bulkWarnBtn.addEventListener('click', async () => {
     bulkProgressEl.textContent = `İşleniyor: 0/${memberIds.length}...`;
     hideError();
 
-    const result = await ipcRenderer.invoke('yoklama-toplu-uyari-ver', memberIds, reason);
+    try {
+        const result = await ipcRenderer.invoke('yoklama-toplu-uyari-ver', memberIds, reason);
 
-    bulkReasonEl.disabled = false;
+        if (!result.ok) {
+            bulkProgressEl.textContent = '';
+            showError(`Toplu uyarı başarısız: ${result.error}`);
+            return;
+        }
 
-    if (!result.ok) {
+        const { warned, skipped, failed, announceError } = result.data;
+
+        warned.forEach(({ id, givenLabel }) => {
+            applyGivenRoleToRow(id, givenLabel);
+            deselectMember(id);
+        });
+        skipped.forEach((s) => deselectMember(s.id));
+        failed.forEach((f) => deselectMember(f.id));
+
+        let summary = `Tamamlandı: ${warned.length} kişiye uyarı verildi.`;
+        if (failed.length) summary += ` ${failed.length} kişide hata oluştu.`;
+        if (announceError) summary += ` Duyuru mesajı gönderilemedi: ${announceError}`;
+        bulkProgressEl.textContent = summary;
+
+        if (warned.length > 0) {
+            bulkReasonEl.value = '';
+        }
+
+        if (skipped.length > 0) {
+            const names = skipped.map((s) => s.tag).join('\n');
+            alert(`Şu kişiler zaten en üst kademede (3x) olduğu için atlandı, rol verilmedi ve duyuru mesajına eklenmedi:\n\n${names}`);
+        }
+    } catch (error) {
         bulkProgressEl.textContent = '';
-        showError(`Toplu uyarı başarısız: ${result.error}`);
+        showError(`Toplu uyarı sırasında beklenmeyen hata: ${error.message}`);
+    } finally {
+        bulkReasonEl.disabled = false;
         updateSelectedCount();
-        return;
     }
-
-    const { warned, skipped, failed, announceError } = result.data;
-
-    warned.forEach(({ id, givenLabel }) => {
-        applyGivenRoleToRow(id, givenLabel);
-        deselectMember(id);
-    });
-    skipped.forEach((s) => deselectMember(s.id));
-    failed.forEach((f) => deselectMember(f.id));
-
-    let summary = `Tamamlandı: ${warned.length} kişiye uyarı verildi.`;
-    if (failed.length) summary += ` ${failed.length} kişide hata oluştu.`;
-    if (announceError) summary += ` Duyuru mesajı gönderilemedi: ${announceError}`;
-    bulkProgressEl.textContent = summary;
-
-    if (warned.length > 0) {
-        bulkReasonEl.value = '';
-    }
-
-    if (skipped.length > 0) {
-        const names = skipped.map((s) => s.tag).join('\n');
-        alert(`Şu kişiler zaten en üst kademede (3x) olduğu için atlandı, rol verilmedi ve duyuru mesajına eklenmedi:\n\n${names}`);
-    }
-
-    updateSelectedCount();
 });
 
 // --- ACİL TOPLANTI ---
@@ -544,5 +588,62 @@ ipcRenderer.on('yetki-log-yeni', (event, { type, entry }) => {
 
 // Panel açılışında (ya da bağlantı zaten kurulmuşsa) mevcut durumu bir kere iste.
 ipcRenderer.invoke('yetki-log-durumu').then((state) => applyChannelLogState(state));
+
+// --- AYARLAR / LOGO ---
+const logoPreview = document.getElementById('logoPreview');
+const logoPreviewPlaceholder = document.getElementById('logoPreviewPlaceholder');
+const logoPickBtn = document.getElementById('logoPickBtn');
+const logoResetBtn = document.getElementById('logoResetBtn');
+const logoStatus = document.getElementById('logoStatus');
+
+function applyLogoState(state) {
+    const iconPath = state && state.iconPath;
+    if (iconPath) {
+        // file:// URL'i - Windows yollarındaki ters slash'ları düzeltiyoruz.
+        logoPreview.src = `file://${iconPath.replace(/\\/g, '/')}?t=${Date.now()}`;
+        logoPreview.style.display = 'block';
+        logoPreviewPlaceholder.style.display = 'none';
+    } else {
+        logoPreview.style.display = 'none';
+        logoPreviewPlaceholder.style.display = 'flex';
+    }
+}
+
+ipcRenderer.invoke('logo-durumu').then((state) => applyLogoState(state));
+
+logoPickBtn.addEventListener('click', async () => {
+    logoPickBtn.disabled = true;
+    logoStatus.textContent = 'Seçiliyor...';
+    try {
+        const result = await ipcRenderer.invoke('logo-sec');
+        if (result.canceled) {
+            logoStatus.textContent = 'PNG, JPG ya da ICO seçebilirsin. Pencere/görev çubuğu simgesi hemen değişir.';
+            return;
+        }
+        if (!result.ok) {
+            logoStatus.textContent = `Hata: ${result.error}`;
+            return;
+        }
+        applyLogoState({ iconPath: result.iconPath });
+        logoStatus.textContent = 'Logo güncellendi.';
+    } catch (error) {
+        logoStatus.textContent = `Hata: ${error.message}`;
+    } finally {
+        logoPickBtn.disabled = false;
+    }
+});
+
+logoResetBtn.addEventListener('click', async () => {
+    logoResetBtn.disabled = true;
+    try {
+        await ipcRenderer.invoke('logo-sifirla');
+        applyLogoState({ iconPath: null });
+        logoStatus.textContent = 'Sıfırlandı - tam olarak yansıması için uygulamayı yeniden başlat.';
+    } catch (error) {
+        logoStatus.textContent = `Hata: ${error.message}`;
+    } finally {
+        logoResetBtn.disabled = false;
+    }
+});
 
 // Not: Açılışta otomatik tarama YOK - "Taramayı Başlat" butonuna basmak gerekiyor.
