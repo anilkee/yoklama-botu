@@ -76,6 +76,9 @@ const bulkReasonEl = document.getElementById('bulkReason');
 const bulkWarnBtn = document.getElementById('bulkWarnBtn');
 const bulkProgressEl = document.getElementById('bulkProgress');
 
+const emergencyBtn = document.getElementById('emergencyBtn');
+const emergencyStatus = document.getElementById('emergencyStatus');
+
 let countdownInterval = null;
 let lastResults = [];
 const selectedIds = new Set();
@@ -429,6 +432,37 @@ bulkWarnBtn.addEventListener('click', async () => {
     }
 
     updateSelectedCount();
+});
+
+// --- ACİL TOPLANTI ---
+ipcRenderer.on('yoklama-acil-toplanti-ilerleme', (event, progress) => {
+    emergencyStatus.textContent = `Taşınıyor: ${progress.current}/${progress.total}...`;
+});
+
+emergencyBtn.addEventListener('click', async () => {
+    const confirmed = confirm('Belirlenen rollerde, o an seste olan herkesi şu anki ses kanalına çekmek istediğine emin misin?');
+    if (!confirmed) return;
+
+    emergencyBtn.disabled = true;
+    emergencyStatus.textContent = 'Başlatılıyor...';
+    hideError();
+
+    const result = await ipcRenderer.invoke('yoklama-acil-toplanti');
+    emergencyBtn.disabled = false;
+
+    if (!result.ok) {
+        emergencyStatus.textContent = 'Belirlenen rollerde, o an seste olan herkesi bulunduğun ses kanalına çeker.';
+        showError(`Acil toplantı başarısız: ${result.error}`);
+        return;
+    }
+
+    const { moved, failed } = result.data;
+    emergencyStatus.textContent = `Tamamlandı: ${moved.length} kişi çekildi${failed.length ? `, ${failed.length} kişi taşınamadı` : ''}.`;
+
+    if (failed.length > 0) {
+        const names = failed.map((f) => `${f.tag}: ${f.error}`).join('\n');
+        alert(`Şu kişiler taşınamadı:\n\n${names}`);
+    }
 });
 
 // Panel açılınca bekleyen bir zamanlama varsa geri say

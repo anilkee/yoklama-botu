@@ -155,6 +155,9 @@ const WARNING_ANNOUNCE_CHANNEL_ID = '1483232323674701835';
 // riskini artırır.
 const BULK_WARNING_DELAY_MS = 1200;
 
+// Acil toplantıda kişi başı ses kanalı taşıma arasında küçük bir bekleme.
+const EMERGENCY_MEETING_DELAY_MS = 500;
+
 let mainWindow;
 let setupWindow;
 let updateProgressWindow;
@@ -689,6 +692,79 @@ async function giveBulkWarning(memberIds, reason) {
 
     return { warned, skipped, failed, announceError };
 }
+
+// Botun (bu hesabın) o an bulunduğu ses kanalını bulur, belirlenen
+// rol(ler)deki ve şu an HERHANGİ bir ses kanalında olan herkesi oraya taşır.
+// Discord API'si sadece zaten seste olan birini başka kanala taşıyabilir -
+// hiç seste olmayan biri zorla sese alınamaz.
+async function pullEveryoneToMyVoiceChannel() {
+    const guild = client.guilds.cache.get(GUILD_ID) || await client.guilds.fetch(GUILD_ID);
+    if (!guild) throw new Error('Sunucu bulunamadı, GUILD_ID hatalı olabilir.');
+    if (!guild.shard) {
+        throw new Error('Bu sunucu için gateway bağlantısı (shard) henüz hazır değil - hesap sunucuya tam bağlanamamış olabilir.');
+    }
+
+    let myMember = guild.members.cache.get(client.user.id);
+    if (!myMember) {
+        myMember = await guild.members.fetch(client.user.id);
+    }
+    const targetChannelId = myMember.voice.channelId;
+    if (!targetChannelId) {
+        throw new Error('Önce kendi hesabınla bir ses kanalına gir, sonra acil toplantıyı başlat.');
+    }
+
+    try {
+        await guild.members.fetch();
+    } catch (error) {
+        throw new Error(`Üye listesi alınamadı: ${error.message}`);
+    }
+
+    const targets = [...guild.members.cache.values()].filter((member) => (
+        ATTENDANCE_ROLE_IDS.some((roleId) => member.roles.cache.has(roleId))
+        && member.voice.channelId
+        && member.voice.channelId !== targetChannelId
+    ));
+
+    const moved = [];
+    const failed = [];
+
+    for (let i = 0; i < targets.length; i += 1) {
+        const member = targets[i];
+
+        if (mainWindow) {
+            mainWindow.webContents.send('yoklama-acil-toplanti-ilerleme', {
+                current: i + 1,
+                total: targets.length,
+            });
+        }
+
+        try {
+            // eslint-disable-next-line no-await-in-loop
+            await member.voice.setChannel(targetChannelId, 'Acil toplantı');
+            moved.push({ id: member.id, tag: member.user.tag });
+        } catch (error) {
+            failed.push({ id: member.id, tag: member.user.tag, error: error.message });
+        }
+
+        if (i < targets.length - 1) {
+            // eslint-disable-next-line no-await-in-loop
+            await new Promise((resolve) => setTimeout(resolve, EMERGENCY_MEETING_DELAY_MS));
+        }
+    }
+
+    console.log(`[Yoklama] Acil toplantı: ${moved.length} kişi çekildi, ${failed.length} kişi taşınamadı (hedef kanal: ${targetChannelId}).`);
+
+    return { targetChannelId, moved, failed };
+}
+
+ipcMain.handle('yoklama-acil-toplanti', async () => {
+    try {
+        return { ok: true, data: await pullEveryoneToMyVoiceChannel() };
+    } catch (error) {
+        console.log(`[Yoklama] Acil toplantı hatası: ${error.message}`);
+        return { ok: false, error: error.message };
+    }
+});
 
 ipcMain.handle('yoklama-toplu-uyari-ver', async (event, memberIds, reason) => {
     try {
