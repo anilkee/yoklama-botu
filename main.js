@@ -72,7 +72,7 @@ process.on('uncaughtException', (error) => {
     console.log(`[Hata] Yakalanmamış istisna: ${error && error.stack ? error.stack : error}`);
 });
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Notification } = require('electron');
 
 // Aynı anda birden fazla kopya açılmasını engelliyoruz.
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -158,11 +158,24 @@ const BULK_WARNING_DELAY_MS = 1200;
 // Acil toplantıda kişi başı ses kanalı taşıma arasında küçük bir bekleme.
 const EMERGENCY_MEETING_DELAY_MS = 500;
 
+// --- MUTE/UNMUTE KANAL TAKİBİ ---
+// Bu 2 kanala düşen mesajlar (mute/unmute işlem botunun kendisinden) hiçbir
+// yere kaydedilmiyor - sadece hafızada tutulup panelde gösteriliyor ve yeni
+// gelenler için Windows bildirimi açılıyor.
+const LOG_BOT_ID = '1470758770790498377';
+const MUTE_CHANNEL_ID = '1456027009624051940';
+const UNMUTE_CHANNEL_ID = '1456027014036459663';
+const LOG_ENTRIES_CAP = 50; // hafızada kişi başına en fazla tutulacak kayıt
+
 let mainWindow;
 let setupWindow;
 let updateProgressWindow;
 let discordStatus = 'bağlanıyor'; // 'bağlanıyor' | 'bağlı' | 'hata'
 let discordStatusDetail = 'Bağlanıyor...';
+
+let muteLogEntries = [];
+let unmuteLogEntries = [];
+let channelLogsInitialized = false;
 
 function broadcastStatus() {
     if (mainWindow) mainWindow.webContents.send('status', { state: discordStatus, detail: discordStatusDetail });
@@ -248,6 +261,11 @@ function markConnected(source) {
         readyPollTimer = null;
     }
     broadcastStatus();
+
+    if (!channelLogsInitialized) {
+        channelLogsInitialized = true;
+        initChannelLogs();
+    }
 }
 
 function startReadyPolling() {
@@ -276,6 +294,126 @@ client.on('disconnect', () => {
     stopConnectWatchdog();
     broadcastStatus();
 });
+
+// --- MUTE/UNMUTE MESAJLARINI OKUMA ---
+// Sistem botunun attığı embed'den hedef oyuncu ID'sini ve işlemi yapan
+// yetkilinin adını/avatarını çıkarır. Alan adları mute/unmute embed'lerinde
+// birebir aynı olmayabildiği için ("Susturulan Oyuncu ID" / "Unmute Edilen
+// Oyuncu ID" gibi) esnek (kısmi eşleşen) desenlerle arıyoruz.
+function parseLogMessage(message) {
+    const embed = message.embeds && message.embeds[0];
+    const fields = (embed && embed.fields) || [];
+    const findField = (pattern) => fields.find((f) => pattern.test(f.name || ''));
+
+    const targetField = findField(/oyuncu\s*id/i);
+    const staffField = findField(/yetkili/i);
+    const reasonField = findField(/sebe/i);
+
+    let targetId = null;
+    if (targetField) {
+        const match = targetField.value.match(/\d+/);
+        targetId = match ? match[0] : targetField.value.trim();
+    }
+
+    let staffName = null;
+    let staffId = null;
+    if (staffField) {
+        const match = staffField.value.match(/^(.*?)\s*\(([^)]+)\)/);
+        if (match) {
+            staffName = match[1].trim();
+            staffId = match[2].trim();
+        } else {
+            staffName = staffField.value.trim();
+        }
+    }
+
+    return {
+        id: message.id,
+        targetId,
+        staffName,
+        staffId,
+        staffAvatarUrl: embed && embed.thumbnail ? embed.thumbnail.url : null,
+        reason: reasonField ? reasonField.value.trim() : null,
+        timestamp: message.createdTimestamp,
+    };
+}
+
+async function fetchRecentChannelMessages(channelId, limit) {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel) return [];
+    const batch = await channel.messages.fetch({ limit });
+    return [...batch.values()]
+        .filter((message) => message.author.id === LOG_BOT_ID)
+        .map(parseLogMessage)
+        .reverse(); // en eskiden en yeniye
+}
+
+async function initChannelLogs() {
+    try {
+        const [mute, unmute] = await Promise.all([
+            fetchRecentChannelMessages(MUTE_CHANNEL_ID, 5),
+            fetchRecentChannelMessages(UNMUTE_CHANNEL_ID, 5),
+        ]);
+        muteLogEntries = mute;
+        unmuteLogEntries = unmute;
+        if (mainWindow) {
+            mainWindow.webContents.send('yetki-log-baslangic', { mute: muteLogEntries, unmute: unmuteLogEntries });
+        }
+    } catch (error) {
+        console.log(`[YetkiLog] Başlangıç mesajları alınamadı: ${error.message}`);
+    }
+}
+
+// Windows bildiriminde yetkilinin profil fotoğrafı görünsün diye küçük
+// avatar resmini geçici bir dosyaya indirip simge olarak kullanıyoruz -
+// Electron'un Notification API'si uzak bir URL'i doğrudan kabul etmiyor.
+async function showDesktopNotification(type, entry) {
+    if (!Notification.isSupported()) return;
+
+    const actionWord = type === 'mute' ? 'mute attı' : 'unmute attı';
+    const title = type === 'mute' ? '🔇 Mute' : '🔊 Unmute';
+    const staffLabel = entry.staffName || 'Bilinmeyen yetkili';
+    const body = `${staffLabel} adlı yetkili ${entry.targetId || '?'} ID'li oyuncuya ${actionWord}`;
+
+    let iconPath;
+    if (entry.staffAvatarUrl) {
+        try {
+            iconPath = path.join(os.tmpdir(), `yoklama-avatar-${Date.now()}.png`);
+            await httpsDownloadFile(entry.staffAvatarUrl, iconPath);
+        } catch (error) {
+            console.log(`[Bildirim] Avatar indirilemedi: ${error.message}`);
+            iconPath = undefined;
+        }
+    }
+
+    const notification = new Notification({ title, body, icon: iconPath });
+    notification.show();
+
+    if (iconPath) {
+        setTimeout(() => {
+            fs.rm(iconPath, { force: true }, () => {});
+        }, 10000);
+    }
+}
+
+client.on('messageCreate', (message) => {
+    if (message.author.id !== LOG_BOT_ID) return;
+    if (message.channelId !== MUTE_CHANNEL_ID && message.channelId !== UNMUTE_CHANNEL_ID) return;
+
+    const type = message.channelId === MUTE_CHANNEL_ID ? 'mute' : 'unmute';
+    const entry = parseLogMessage(message);
+    const list = type === 'mute' ? muteLogEntries : unmuteLogEntries;
+    list.push(entry);
+    while (list.length > LOG_ENTRIES_CAP) list.shift();
+
+    if (mainWindow) mainWindow.webContents.send('yetki-log-yeni', { type, entry });
+
+    showDesktopNotification(type, entry).catch((error) => {
+        console.log(`[Bildirim] Gönderilemedi: ${error.message}`);
+    });
+});
+
+ipcMain.handle('yetki-log-durumu', () => ({ mute: muteLogEntries, unmute: unmuteLogEntries }));
 
 // --- İLK KURULUM: sadece Discord token gerekiyor ---
 const SETUP_REQUIRED_FIELDS = ['USER_TOKEN'];

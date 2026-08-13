@@ -27,6 +27,19 @@ function applyStatus(status) {
 ipcRenderer.on('status', (event, status) => applyStatus(status));
 ipcRenderer.send('request-status');
 
+// --- SEKME GEÇİŞİ ---
+const tabButtons = document.querySelectorAll('.tab-btn');
+const tabPanels = document.querySelectorAll('.tab-panel');
+tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+        tabButtons.forEach((b) => b.classList.remove('active'));
+        tabPanels.forEach((p) => p.classList.remove('active'));
+        btn.classList.add('active');
+        const panel = document.getElementById(`tab-${btn.dataset.tab}`);
+        if (panel) panel.classList.add('active');
+    });
+});
+
 // --- İŞLEM KAYDI (LOG) ---
 const logListEl = document.getElementById('logList');
 const clearLogBtn = document.getElementById('clearLogBtn');
@@ -469,5 +482,67 @@ emergencyBtn.addEventListener('click', async () => {
 ipcRenderer.invoke('yoklama-zamanlama-durumu').then((state) => {
     if (state && state.scheduledAt) startCountdown(state.scheduledAt);
 });
+
+// --- MUTE / UNMUTE KAYITLARI ---
+// Hiçbir şey diske kaydedilmiyor - sadece hafızada tutulup gösteriliyor.
+const muteListEl = document.getElementById('muteList');
+const muteEmptyState = document.getElementById('muteEmptyState');
+const unmuteListEl = document.getElementById('unmuteList');
+const unmuteEmptyState = document.getElementById('unmuteEmptyState');
+
+function renderFeedEntry(type, entry) {
+    const div = document.createElement('div');
+    div.className = 'feed-item';
+    const actionWord = type === 'mute' ? 'mute attı' : 'unmute attı';
+    const staffLabel = entry.staffName || 'Bilinmeyen yetkili';
+    const avatarSrc = entry.staffAvatarUrl || '';
+    div.innerHTML = `
+        <img class="feed-avatar" src="${avatarSrc}" alt="" onerror="this.style.visibility='hidden'">
+        <div class="feed-body">
+            <div class="feed-text"><b>${escapeHtml(staffLabel)}</b> adlı yetkili <b>${escapeHtml(String(entry.targetId || '?'))}</b> ID'li oyuncuya ${actionWord}</div>
+            ${entry.reason ? `<div class="feed-reason">Sebep: ${escapeHtml(entry.reason)}</div>` : ''}
+            <div class="feed-time muted">${formatDate(entry.timestamp)}</div>
+        </div>
+    `;
+    return div;
+}
+
+function renderFeedList(listEl_, emptyEl, type, entries) {
+    listEl_.innerHTML = '';
+    if (!entries || entries.length === 0) {
+        emptyEl.style.display = 'block';
+        return;
+    }
+    emptyEl.style.display = 'none';
+    // en yeni en üstte
+    [...entries].reverse().forEach((entry) => {
+        listEl_.appendChild(renderFeedEntry(type, entry));
+    });
+}
+
+let muteEntries = [];
+let unmuteEntries = [];
+
+function applyChannelLogState(state) {
+    muteEntries = (state && state.mute) || [];
+    unmuteEntries = (state && state.unmute) || [];
+    renderFeedList(muteListEl, muteEmptyState, 'mute', muteEntries);
+    renderFeedList(unmuteListEl, unmuteEmptyState, 'unmute', unmuteEntries);
+}
+
+ipcRenderer.on('yetki-log-baslangic', (event, state) => applyChannelLogState(state));
+
+ipcRenderer.on('yetki-log-yeni', (event, { type, entry }) => {
+    if (type === 'mute') {
+        muteEntries.push(entry);
+        renderFeedList(muteListEl, muteEmptyState, 'mute', muteEntries);
+    } else {
+        unmuteEntries.push(entry);
+        renderFeedList(unmuteListEl, unmuteEmptyState, 'unmute', unmuteEntries);
+    }
+});
+
+// Panel açılışında (ya da bağlantı zaten kurulmuşsa) mevcut durumu bir kere iste.
+ipcRenderer.invoke('yetki-log-durumu').then((state) => applyChannelLogState(state));
 
 // Not: Açılışta otomatik tarama YOK - "Taramayı Başlat" butonuna basmak gerekiyor.

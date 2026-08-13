@@ -29,7 +29,7 @@
             height: 100vh;
         }
 
-        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-shrink: 0; }
+        .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex-shrink: 0; }
         .header h1 { font-size: 15px; margin: 0; color: var(--text); font-weight: 700; letter-spacing: .02em; }
         .header p { font-size: 11px; color: var(--text-muted); margin: 2px 0 0; }
 
@@ -39,9 +39,17 @@
         .status-dot.ok { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
         .status-dot.danger { background: #ff5252; box-shadow: 0 0 8px #ff0000; }
 
-        .main-layout { display: flex; gap: 12px; flex: 1; min-height: 0; }
-        .left-col { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-        .right-col { width: 260px; display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; }
+        /* --- SEKME ÇUBUĞU --- */
+        .tab-bar { display: flex; gap: 6px; margin-bottom: 12px; flex-shrink: 0; border-bottom: 1px solid var(--border); padding-bottom: 10px; flex-wrap: wrap; }
+        .tab-btn {
+            background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border);
+            padding: 7px 13px; border-radius: 6px; cursor: pointer; font-size: 11.5px; font-weight: 600;
+            font-family: "Segoe UI", sans-serif; transition: all .15s; position: relative;
+        }
+        .tab-btn:hover { color: var(--text); }
+        .tab-btn.active { background: var(--accent); color: #0a0707; border-color: var(--accent); }
+        .tab-panel { display: none; flex: 1; min-height: 0; flex-direction: column; }
+        .tab-panel.active { display: flex; }
 
         .card {
             background: var(--bg-card); border: 1px solid var(--border);
@@ -65,17 +73,19 @@
         button.small { padding: 6px 10px; font-size: 11px; }
 
         .scanStatus { font-size: 11px; color: var(--text-muted); }
-
-        .emergency-card { border-color: var(--accent); background: linear-gradient(180deg, rgba(255,45,61,0.08), var(--bg-card)); }
-        .emergency-btn { animation: pulseGlow 1.8s ease-in-out infinite; }
-        @keyframes pulseGlow {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(255,45,61,0.55); }
-            50% { box-shadow: 0 0 0 6px rgba(255,45,61,0); }
-        }
         .summary { font-size: 11.5px; color: var(--text); margin-top: 8px; display: flex; gap: 14px; flex-wrap: wrap; }
         .summary b { color: var(--accent); }
         .summary .green-num { color: var(--green); font-weight: 700; }
         .summary .red-num { color: var(--accent); font-weight: 700; }
+
+        /* --- KÜÇÜLTÜLMÜŞ ACİL TOPLANTI SATIRI --- */
+        .emergency-row {
+            display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-shrink: 0;
+            background: var(--bg-card); border: 1px solid var(--accent-dim); border-radius: 8px; padding: 8px 12px;
+        }
+        .emergency-row .emergency-label { font-size: 11.5px; color: var(--text-muted); }
+        #emergencyBtn { padding: 6px 11px; font-size: 11px; flex-shrink: 0; }
+        #emergencyStatus { font-size: 11px; color: var(--accent); margin-left: auto; }
 
         .sched-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .sched-row input {
@@ -92,7 +102,7 @@
         }
 
         #listWrap { flex: 1; overflow-y: auto; min-height: 0; }
-        #emptyState {
+        .empty-hint {
             display: none; text-align: center; color: var(--text-muted); font-size: 12.5px;
             padding: 40px 10px;
         }
@@ -170,12 +180,11 @@
         }
         .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
-        /* --- LOG PANELİ --- */
-        .log-card { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-bottom: 0; }
-        .log-card h2 { flex-shrink: 0; }
+        /* --- İŞLEM KAYDI SEKMESİ --- */
         #logList {
             flex: 1; overflow-y: auto; font-family: Consolas, "Courier New", monospace;
-            font-size: 10.5px; line-height: 1.6; color: #c9a6a6;
+            font-size: 10.5px; line-height: 1.7; color: #c9a6a6;
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
         }
         .log-line { padding: 2px 0; border-bottom: 1px solid rgba(58,24,24,0.5); word-break: break-word; }
         .log-line .log-time { color: var(--text-muted); margin-right: 6px; }
@@ -183,14 +192,27 @@
         .log-line.log-uyarı { color: var(--amber); }
         .log-line.log-yoklama { color: #e6c8c8; }
         .log-line.log-güncelleme { color: #8fb8ff; }
-        .clearLogBtn { width: 100%; margin-top: 8px; }
+        .clearLogBtn { margin-top: 8px; align-self: flex-start; }
+
+        /* --- MUTE/UNMUTE FEED SEKMELERİ --- */
+        .feed-wrap { flex: 1; overflow-y: auto; }
+        .feed-item {
+            display: flex; gap: 10px; background: var(--bg-card); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+        }
+        .feed-avatar { width: 40px; height: 40px; border-radius: 50%; background: var(--bg-input); flex-shrink: 0; object-fit: cover; }
+        .feed-body { flex: 1; min-width: 0; }
+        .feed-text { font-size: 12.5px; line-height: 1.5; }
+        .feed-text b { color: var(--accent); }
+        .feed-reason { font-size: 11px; color: #d8c2c2; margin-top: 3px; }
+        .feed-time { font-size: 10.5px; margin-top: 4px; }
     </style>
 </head>
 <body>
     <div class="header">
         <div>
             <h1>MD PvP Yoklama Botu</h1>
-            <p>Sesde olanlar/olmayanlar, mazaretler ve uyarı yönetimi</p>
+            <p>Sesde olanlar/olmayanlar, mazaretler, uyarılar, mute/unmute takibi</p>
         </div>
         <div class="status-row">
             <span id="versionText" style="margin-right: 10px;"></span>
@@ -200,62 +222,80 @@
         </div>
     </div>
 
+    <div class="tab-bar">
+        <button class="tab-btn active" data-tab="yoklama">Yoklama</button>
+        <button class="tab-btn" data-tab="kayit">İşlem Kaydı</button>
+        <button class="tab-btn" data-tab="mute">Mute Kayıtları</button>
+        <button class="tab-btn" data-tab="unmute">Unmute Kayıtları</button>
+    </div>
+
     <div id="errorBox"></div>
 
-    <div class="main-layout">
-        <div class="left-col">
-            <div class="card emergency-card">
-                <h2>🚨 Acil Toplantı</h2>
-                <div class="toolbar">
-                    <button id="emergencyBtn" class="emergency-btn">Acil Toplantı Başlat</button>
-                    <span class="scanStatus" id="emergencyStatus">Belirlenen rollerde, o an seste olan herkesi bulunduğun ses kanalına çeker.</span>
-                </div>
-            </div>
+    <!-- --- SEKME: YOKLAMA --- -->
+    <div class="tab-panel active" id="tab-yoklama">
+        <div class="emergency-row">
+            <span class="emergency-label">🚨 Sesteki tüm yetkilileri bulunduğun ses kanalına çeker</span>
+            <button id="emergencyBtn" class="secondary">Acil Toplantı</button>
+            <span id="emergencyStatus"></span>
+        </div>
 
-            <div class="card">
-                <h2>Tarama</h2>
-                <div class="toolbar">
-                    <button id="scanBtn">Taramayı Başlat</button>
-                    <span class="scanStatus" id="scanStatus">Henüz tarama yapılmadı - "Taramayı Başlat"a bas.</span>
-                </div>
-                <div class="summary" id="summaryText"></div>
+        <div class="card">
+            <h2>Tarama</h2>
+            <div class="toolbar">
+                <button id="scanBtn">Taramayı Başlat</button>
+                <span class="scanStatus" id="scanStatus">Henüz tarama yapılmadı - "Taramayı Başlat"a bas.</span>
             </div>
+            <div class="summary" id="summaryText"></div>
+        </div>
 
-            <div class="card">
-                <h2>Sonraki Taramayı Zamanla</h2>
-                <div class="sched-row">
-                    <label>Saat</label>
-                    <input type="number" id="schedHours" min="0" max="72" value="0">
-                    <label>Dakika</label>
-                    <input type="number" id="schedMinutes" min="0" max="59" value="30">
-                    <button class="secondary small" id="scheduleBtn">Zamanla</button>
-                    <button class="secondary small" id="cancelScheduleBtn" style="display:none;">İptal Et</button>
-                    <span class="countdown" id="countdownText"></span>
-                </div>
-            </div>
-
-            <div class="card">
-                <h2>Toplu Uyarı</h2>
-                <div class="bulk-row">
-                    <span class="selectedCount" id="selectedCount">0 kişi seçili</span>
-                    <textarea id="bulkReason" placeholder="Uyarı sebebi..."></textarea>
-                    <button id="bulkWarnBtn" disabled>Toplu Uyarı Ver</button>
-                </div>
-                <div class="bulkProgress" id="bulkProgress"></div>
-            </div>
-
-            <div id="listWrap">
-                <div id="emptyState">Kontrol edilecek rollerde kimse bulunamadı.</div>
-                <div id="list"></div>
+        <div class="card">
+            <h2>Sonraki Taramayı Zamanla</h2>
+            <div class="sched-row">
+                <label>Saat</label>
+                <input type="number" id="schedHours" min="0" max="72" value="0">
+                <label>Dakika</label>
+                <input type="number" id="schedMinutes" min="0" max="59" value="30">
+                <button class="secondary small" id="scheduleBtn">Zamanla</button>
+                <button class="secondary small" id="cancelScheduleBtn" style="display:none;">İptal Et</button>
+                <span class="countdown" id="countdownText"></span>
             </div>
         </div>
 
-        <div class="right-col">
-            <div class="card log-card">
-                <h2>İşlem Kaydı</h2>
-                <div id="logList"></div>
-                <button class="secondary small clearLogBtn" id="clearLogBtn">Kaydı Temizle</button>
+        <div class="card">
+            <h2>Toplu Uyarı</h2>
+            <div class="bulk-row">
+                <span class="selectedCount" id="selectedCount">0 kişi seçili</span>
+                <textarea id="bulkReason" placeholder="Uyarı sebebi..."></textarea>
+                <button id="bulkWarnBtn" disabled>Toplu Uyarı Ver</button>
             </div>
+            <div class="bulkProgress" id="bulkProgress"></div>
+        </div>
+
+        <div id="listWrap">
+            <div class="empty-hint" id="emptyState">Kontrol edilecek rollerde kimse bulunamadı.</div>
+            <div id="list"></div>
+        </div>
+    </div>
+
+    <!-- --- SEKME: İŞLEM KAYDI --- -->
+    <div class="tab-panel" id="tab-kayit">
+        <div id="logList"></div>
+        <button class="secondary small clearLogBtn" id="clearLogBtn">Kaydı Temizle</button>
+    </div>
+
+    <!-- --- SEKME: MUTE KAYITLARI --- -->
+    <div class="tab-panel" id="tab-mute">
+        <div class="feed-wrap">
+            <div class="empty-hint" id="muteEmptyState">Henüz mute kaydı yok.</div>
+            <div id="muteList"></div>
+        </div>
+    </div>
+
+    <!-- --- SEKME: UNMUTE KAYITLARI --- -->
+    <div class="tab-panel" id="tab-unmute">
+        <div class="feed-wrap">
+            <div class="empty-hint" id="unmuteEmptyState">Henüz unmute kaydı yok.</div>
+            <div id="unmuteList"></div>
         </div>
     </div>
 
